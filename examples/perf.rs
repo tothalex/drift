@@ -14,7 +14,10 @@ fn main() -> anyhow::Result<()> {
     let cmp = vcs.comparison(None)?;
     let files = vcs.changed_files(&cmp)?;
 
-    println!("{:<24} {:>9} {:>9} {:>9} {:>9} {:>9}", "file", "diff", "read", "show", "process", "TOTAL");
+    println!(
+        "{:<24} {:>9} {:>9} {:>9} {:>9} {:>9}",
+        "file", "diff", "read", "show", "process", "TOTAL"
+    );
     for file in &files {
         let t0 = Instant::now();
         let diff = vcs.file_diff(&cmp, file)?;

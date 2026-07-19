@@ -10,6 +10,7 @@ pub mod comments;
 pub mod emphasis;
 pub mod highlight;
 pub mod splice;
+pub mod tabs;
 pub mod treesitter;
 pub mod view;
 
@@ -19,7 +20,7 @@ use crate::vcs::model::{FileDiff, Hunk, LineKind};
 
 use blocks::BlockResolver;
 use highlight::FileHighlights;
-use splice::{change_segments, collapse, DiffIndex};
+use splice::{DiffIndex, change_segments, collapse};
 use treesitter::TsResolver;
 use view::{FileView, Section, ViewLine};
 
@@ -44,7 +45,6 @@ pub struct ViewOptions {
     /// Fold unchanged comment-only blocks into a one-line summary.
     pub fold_comments: bool,
 }
-
 
 /// `new_source` is the new-side (working tree) content; `None` — e.g. for
 /// deleted or unreadable files — forces the hunk fallback. `old_source` is
@@ -89,7 +89,12 @@ pub fn process(
     let old_highlights = old_source.and_then(|src| {
         let old_resolver = TsResolver::new(path, src)?;
         let byte_ranges = removed_line_byte_ranges(&sections, &old_resolver);
-        highlight::highlight_tree(old_resolver.spec(), old_resolver.tree(), src, Some(&byte_ranges))
+        highlight::highlight_tree(
+            old_resolver.spec(),
+            old_resolver.tree(),
+            src,
+            Some(&byte_ranges),
+        )
     });
     if new_highlights.is_some() || old_highlights.is_some() {
         for section in &mut sections {
@@ -100,7 +105,13 @@ pub fn process(
     // precomputed here so the renderer never re-derives it per frame.
     for section in &mut sections {
         for view_line in &mut section.lines {
-            if let ViewLine::Diff { line, spans, comment, .. } = view_line {
+            if let ViewLine::Diff {
+                line,
+                spans,
+                comment,
+                ..
+            } = view_line
+            {
                 *comment = comments::is_comment_line(&line.content, spans);
             }
         }
@@ -111,7 +122,11 @@ pub fn process(
         }
     }
     let diffstat = diffstat_of(&sections);
-    FileView::Sections { sections, scope_max, diffstat }
+    FileView::Sections {
+        sections,
+        scope_max,
+        diffstat,
+    }
 }
 
 /// Merged byte ranges of the removed lines' positions in the old source.
@@ -166,7 +181,10 @@ fn fold_comment_blocks(section: &mut Section) {
                 Some(ViewLine::Diff { line, .. }) => comments::summary(&line.content, 48),
                 _ => String::new(),
             };
-            out.push(ViewLine::CommentFold { count: run.len() as u32, summary });
+            out.push(ViewLine::CommentFold {
+                count: run.len() as u32,
+                summary,
+            });
             run.clear();
         } else {
             out.append(run);
@@ -327,7 +345,13 @@ diff --git a/x.rs b/x.rs
     #[test]
     fn change_expands_to_whole_function() {
         let diff = unidiff::parse(PATCH);
-        let view = process(Path::new("x.rs"), &diff, Some(NEW_SOURCE), None, ViewOptions::default());
+        let view = process(
+            Path::new("x.rs"),
+            &diff,
+            Some(NEW_SOURCE),
+            None,
+            ViewOptions::default(),
+        );
         let FileView::Sections { sections, .. } = view else {
             panic!("expected sections");
         };
@@ -365,7 +389,13 @@ diff --git a/x.rs b/x.rs
     fn spans_attach_from_the_correct_side() {
         let old_source = NEW_SOURCE.replace("let b = 3;", "let b = 2;");
         let diff = unidiff::parse(PATCH);
-        let view = process(Path::new("x.rs"), &diff, Some(NEW_SOURCE), Some(&old_source), ViewOptions::default());
+        let view = process(
+            Path::new("x.rs"),
+            &diff,
+            Some(NEW_SOURCE),
+            Some(&old_source),
+            ViewOptions::default(),
+        );
         let FileView::Sections { sections, .. } = view else {
             panic!("expected sections");
         };
@@ -409,9 +439,15 @@ fn outer() {
  }";
         let diff = unidiff::parse(patch);
         let section_start = |scope: usize| {
-            let opts = ViewOptions { scope, ..Default::default() };
-            let FileView::Sections { sections, scope_max, .. } =
-                process(Path::new("x.rs"), &diff, Some(source), None, opts)
+            let opts = ViewOptions {
+                scope,
+                ..Default::default()
+            };
+            let FileView::Sections {
+                sections,
+                scope_max,
+                ..
+            } = process(Path::new("x.rs"), &diff, Some(source), None, opts)
             else {
                 panic!("expected sections");
             };
@@ -439,7 +475,10 @@ fn outer() {
         let diff = unidiff::parse(patch);
 
         let count = |expand_unchanged: bool| {
-            let opts = ViewOptions { expand_unchanged, ..Default::default() };
+            let opts = ViewOptions {
+                expand_unchanged,
+                ..Default::default()
+            };
             let FileView::Sections { sections, .. } =
                 process(Path::new("x.rs"), &diff, Some(&source), None, opts)
             else {
@@ -485,9 +524,13 @@ fn b() {
 +    two();
  }";
         let diff = unidiff::parse(patch);
-        let FileView::Sections { sections, .. } =
-            process(Path::new("x.rs"), &diff, Some(source), None, ViewOptions::default())
-        else {
+        let FileView::Sections { sections, .. } = process(
+            Path::new("x.rs"),
+            &diff,
+            Some(source),
+            None,
+            ViewOptions::default(),
+        ) else {
             panic!("expected sections");
         };
         assert_eq!(sections.len(), 2);
@@ -519,9 +562,13 @@ export function b(): number {
 +  return 1;
  }";
         let diff = unidiff::parse(patch);
-        let FileView::Sections { sections, .. } =
-            process(Path::new("x.ts"), &diff, Some(source), None, ViewOptions::default())
-        else {
+        let FileView::Sections { sections, .. } = process(
+            Path::new("x.ts"),
+            &diff,
+            Some(source),
+            None,
+            ViewOptions::default(),
+        ) else {
             panic!("expected sections");
         };
         assert_eq!(sections.len(), 1);
@@ -536,7 +583,13 @@ export function b(): number {
     #[test]
     fn unparseable_file_falls_back_to_hunks() {
         let diff = unidiff::parse(PATCH);
-        let view = process(Path::new("notes.txt"), &diff, Some("whatever"), None, ViewOptions::default());
+        let view = process(
+            Path::new("notes.txt"),
+            &diff,
+            Some("whatever"),
+            None,
+            ViewOptions::default(),
+        );
         let FileView::Sections { sections, .. } = view else {
             panic!("expected sections");
         };
@@ -577,8 +630,13 @@ fn long() {
 +    let f = 6;
      let g = 7;";
         let diff = unidiff::parse(patch);
-        let FileView::Sections { sections, .. } = process(Path::new("x.rs"), &diff, Some(source), None, ViewOptions::default())
-        else {
+        let FileView::Sections { sections, .. } = process(
+            Path::new("x.rs"),
+            &diff,
+            Some(source),
+            None,
+            ViewOptions::default(),
+        ) else {
             panic!("expected sections");
         };
         assert_eq!(sections.len(), 1);

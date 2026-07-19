@@ -217,9 +217,7 @@ fn push_split_by_line(
         if line_start >= end {
             break;
         }
-        let line_end = line_starts
-            .get(i + 1)
-            .map_or(source.len(), |next| next - 1);
+        let line_end = line_starts.get(i + 1).map_or(source.len(), |next| next - 1);
         let seg_start = start.max(line_start);
         let seg_end = end.min(line_end);
         if seg_start < seg_end {
@@ -243,9 +241,11 @@ mod tests {
 
         // Line 1: `fn` is a keyword at 0..2, `main` a function.
         let line1 = hl.spans_for(1);
-        assert!(line1
-            .iter()
-            .any(|s| s.token == TokenKind::Keyword && (s.start, s.end) == (0, 2)));
+        assert!(
+            line1
+                .iter()
+                .any(|s| s.token == TokenKind::Keyword && (s.start, s.end) == (0, 2))
+        );
         assert!(line1.iter().any(|s| s.token == TokenKind::Function));
 
         // Line 2: the string literal, offsets relative to the line.
@@ -281,10 +281,11 @@ mod tests {
     fn typescript_queries_build() {
         let source = "export function greet(name: string): string {\n  return `hi ${name}`;\n}\n";
         let hl = highlight(Path::new("x.ts"), source).expect("ts highlights");
-        assert!(hl
-            .spans_for(1)
-            .iter()
-            .any(|s| s.token == TokenKind::Keyword));
+        assert!(
+            hl.spans_for(1)
+                .iter()
+                .any(|s| s.token == TokenKind::Keyword)
+        );
     }
 
     #[test]
@@ -317,4 +318,3 @@ mod tests {
         assert!(hl.spans_for(99).is_empty());
     }
 }
-

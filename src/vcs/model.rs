@@ -56,7 +56,9 @@ pub struct ChangedFile {
 #[derive(Debug, Clone)]
 pub enum FileDiff {
     /// No hunks means the content is unchanged (pure rename or mode change).
-    Text { hunks: Vec<Hunk> },
+    Text {
+        hunks: Vec<Hunk>,
+    },
     Binary,
 }
 

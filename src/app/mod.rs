@@ -10,24 +10,24 @@ pub mod review;
 pub mod tree_nav;
 pub mod view_cache;
 
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use anyhow::Result;
 use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::layout::Position;
 use ratatui::DefaultTerminal;
+use ratatui::layout::Position;
 
 use crate::config::Config;
-use crate::events::{spawn_input_thread, AppEvent};
+use crate::events::{AppEvent, spawn_input_thread};
 use crate::keymap::{Action, Keymap};
-use crate::processor::view::{char_to_byte, FileView};
+use crate::processor::view::{FileView, char_to_byte};
 use crate::theme::Theme;
 use crate::ui::CODE_GUTTER;
-use crate::vcs::model::{ChangedFile, Comparison};
 use crate::vcs::Vcs;
+use crate::vcs::model::{ChangedFile, Comparison};
 
 use code_view::{CodeView, TextPos};
 use panes::PaneLayout;
@@ -175,7 +175,11 @@ impl App {
                 }
                 AppEvent::Input(Event::Mouse(mouse)) => self.handle_mouse(mouse),
                 AppEvent::Input(_) => Ok(()), // resize etc. — redraw on next loop
-                AppEvent::ViewReady { generation, index, view } => {
+                AppEvent::ViewReady {
+                    generation,
+                    index,
+                    view,
+                } => {
                     if generation == self.generation {
                         self.cache.insert_if_absent(index, view);
                     }
@@ -264,11 +268,19 @@ impl App {
             Action::JumpDown => self.code.move_cursor(15 * count, view_len),
             Action::JumpUp => self.code.move_cursor(-15 * count, view_len),
             Action::JumpTop => {
-                let target = if explicit_count { count as usize - 1 } else { 0 };
+                let target = if explicit_count {
+                    count as usize - 1
+                } else {
+                    0
+                };
                 self.code.jump(target, view_len);
             }
             Action::JumpBottom => {
-                let target = if explicit_count { count as usize - 1 } else { usize::MAX };
+                let target = if explicit_count {
+                    count as usize - 1
+                } else {
+                    usize::MAX
+                };
                 self.code.jump(target, view_len);
             }
             Action::ScopeWiden => self.adjust_scope(count)?,
@@ -383,8 +395,7 @@ impl App {
                 self.code.scroll_view(-3, code_viewport, self.view_len());
             }
             MouseEventKind::Down(MouseButton::Left) if in_tree => {
-                let row =
-                    (mouse.row - self.layout.tree_area.y) as usize + self.nav.offset();
+                let row = (mouse.row - self.layout.tree_area.y) as usize + self.nav.offset();
                 if row < self.nav.tree.visible_len() {
                     self.nav.set_cursor(row, tree_viewport);
                     if self.nav.selected_file().is_some() {
@@ -444,7 +455,8 @@ impl App {
 
     fn jump_to_first_match(&mut self) -> Result<()> {
         if let Some(&row) = self.match_rows().first() {
-            self.nav.set_cursor(row, self.layout.tree_area.height as usize);
+            self.nav
+                .set_cursor(row, self.layout.tree_area.height as usize);
             self.sync_current()?;
         }
         Ok(())
@@ -467,7 +479,8 @@ impl App {
             rows.iter().rev().find(|&&row| row < cursor).or(rows.last())
         };
         if let Some(&row) = target {
-            self.nav.set_cursor(row, self.layout.tree_area.height as usize);
+            self.nav
+                .set_cursor(row, self.layout.tree_area.height as usize);
             self.sync_current()?;
         }
         Ok(())
@@ -496,7 +509,8 @@ impl App {
             .position(|f| f.path == path)
             .and_then(|index| self.nav.row_of_file(index));
         if let Some(row) = row {
-            self.nav.set_cursor(row, self.layout.tree_area.height as usize);
+            self.nav
+                .set_cursor(row, self.layout.tree_area.height as usize);
             self.sync_current()?;
         }
         Ok(())
@@ -555,7 +569,11 @@ impl App {
                     if let Ok(view) =
                         view_cache::compute(&files[index], vcs.as_ref(), &cmp, options[index])
                         && tx
-                            .send(AppEvent::ViewReady { generation, index, view })
+                            .send(AppEvent::ViewReady {
+                                generation,
+                                index,
+                                view,
+                            })
                             .is_err()
                     {
                         return; // app is gone
@@ -582,7 +600,8 @@ impl App {
 
     fn ensure_view(&mut self, index: usize) -> Result<()> {
         if let Some(file) = self.files.get(index) {
-            self.cache.ensure(index, file, self.vcs.as_ref(), &self.cmp)?;
+            self.cache
+                .ensure(index, file, self.vcs.as_ref(), &self.cmp)?;
         }
         Ok(())
     }
@@ -705,8 +724,14 @@ impl App {
             if index < l0 || index > l1 {
                 continue;
             }
-            let Some(content) = flat.content() else { continue };
-            let start = if index == l0 { char_to_byte(content, c0) } else { 0 };
+            let Some(content) = flat.content() else {
+                continue;
+            };
+            let start = if index == l0 {
+                char_to_byte(content, c0)
+            } else {
+                0
+            };
             let end = if index == l1 {
                 char_to_byte(content, c1 + 1)
             } else {

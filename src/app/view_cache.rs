@@ -6,10 +6,10 @@ use std::collections::HashMap;
 use anyhow::Result;
 
 use crate::processor;
-use crate::processor::view::FileView;
 use crate::processor::ViewOptions;
-use crate::vcs::model::{ChangedFile, Comparison, FileDiff, LineKind};
+use crate::processor::view::FileView;
 use crate::vcs::Vcs;
+use crate::vcs::model::{ChangedFile, Comparison, FileDiff, LineKind};
 
 pub struct ViewCache {
     views: HashMap<usize, FileView>,
@@ -90,13 +90,19 @@ pub fn compute(
     cmp: &Comparison,
     options: ViewOptions,
 ) -> Result<FileView> {
-    let diff = vcs.file_diff(cmp, file)?;
+    let mut diff = vcs.file_diff(cmp, file)?;
+    // Tabs render zero-width in the terminal; expand them everywhere the
+    // processor looks so spans stay aligned with the displayed text.
+    processor::tabs::expand_diff(&mut diff);
     // New-side content; None (deleted/unreadable) → hunk fallback.
-    let source = std::fs::read_to_string(vcs.root().join(&file.path)).ok();
+    let source = std::fs::read_to_string(vcs.root().join(&file.path))
+        .ok()
+        .map(processor::tabs::expand_tabs_owned);
     // Ancestor-side content is only needed to highlight removed lines;
     // skip the lookup when the diff has none.
     let old_source = if has_removed_lines(&diff) {
         vcs.file_at_ancestor(cmp, file)
+            .map(processor::tabs::expand_tabs_owned)
     } else {
         None
     };

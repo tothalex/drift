@@ -1,11 +1,11 @@
 //! The base-branch picker: a floating panel listing branches by recent
 //! activity. Enter switches the comparison, Esc cancels.
 
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
-use ratatui::Frame;
 
 use crate::app::App;
 
@@ -21,7 +21,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .max()
         .unwrap_or(20)
         .clamp(28, area.width);
-    let rows = picker.branches.len().min(area.height.saturating_sub(6) as usize);
+    let rows = picker
+        .branches
+        .len()
+        .min(area.height.saturating_sub(6) as usize);
     let height = (rows as u16 + 3).min(area.height);
     let panel = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
@@ -40,13 +43,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         "   compare against",
         Style::default().fg(theme.muted),
     )];
-    for (index, branch) in picker
-        .branches
-        .iter()
-        .enumerate()
-        .skip(offset)
-        .take(rows)
-    {
+    for (index, branch) in picker.branches.iter().enumerate().skip(offset).take(rows) {
         let current = *branch == app.cmp.base_label;
         let marker = if current { "●" } else { " " };
         let mut line = Line::from(vec![

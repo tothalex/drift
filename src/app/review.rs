@@ -42,6 +42,9 @@ impl Review {
 
     /// How many of the given files are checked (stale paths don't count).
     pub fn count_in(&self, files: &[ChangedFile]) -> usize {
-        files.iter().filter(|f| self.checked.contains(&f.path)).count()
+        files
+            .iter()
+            .filter(|f| self.checked.contains(&f.path))
+            .count()
     }
 }

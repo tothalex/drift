@@ -20,7 +20,10 @@ pub struct Node {
 }
 
 pub enum NodeKind {
-    Dir { children: Vec<usize>, expanded: bool },
+    Dir {
+        children: Vec<usize>,
+        expanded: bool,
+    },
     /// Index into the changed-files list.
     File { index: usize, status: FileStatus },
 }
@@ -75,7 +78,10 @@ impl FileTree {
             self.nodes.push(Node {
                 label,
                 depth,
-                kind: NodeKind::Dir { children: Vec::new(), expanded: true },
+                kind: NodeKind::Dir {
+                    children: Vec::new(),
+                    expanded: true,
+                },
             });
             let children = self.convert(sub, depth + 1);
             let NodeKind::Dir { children: slot, .. } = &mut self.nodes[id].kind else {
@@ -102,7 +108,11 @@ impl FileTree {
         fn walk(nodes: &[Node], ids: &[usize], out: &mut Vec<usize>) {
             for &id in ids {
                 out.push(id);
-                if let NodeKind::Dir { children, expanded: true } = &nodes[id].kind {
+                if let NodeKind::Dir {
+                    children,
+                    expanded: true,
+                } = &nodes[id].kind
+                {
                     walk(nodes, children, out);
                 }
             }

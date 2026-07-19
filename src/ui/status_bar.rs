@@ -1,8 +1,8 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::App;
 
@@ -10,7 +10,10 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let comparison = format!(" {} ← {} ", app.cmp.base_label, app.cmp.work_label);
     let mut spans = vec![
-        Span::styled(comparison, Style::default().add_modifier(Modifier::REVERSED)),
+        Span::styled(
+            comparison,
+            Style::default().add_modifier(Modifier::REVERSED),
+        ),
         Span::styled(" ? keys · q quit ", Style::default().fg(theme.muted)),
     ];
     if app.code.selection().is_some() {

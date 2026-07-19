@@ -59,7 +59,11 @@ mod tests {
     use super::*;
 
     fn comment_span(start: usize, end: usize) -> HighlightSpan {
-        HighlightSpan { start, end, token: TokenKind::Comment }
+        HighlightSpan {
+            start,
+            end,
+            token: TokenKind::Comment,
+        }
     }
 
     #[test]

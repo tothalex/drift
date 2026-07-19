@@ -16,7 +16,11 @@ impl TreeNav {
     pub fn new(files: &[ChangedFile]) -> TreeNav {
         let tree = FileTree::build(files);
         let cursor = tree.first_file_row().unwrap_or(0);
-        TreeNav { tree, cursor, offset: 0 }
+        TreeNav {
+            tree,
+            cursor,
+            offset: 0,
+        }
     }
 
     pub fn rebuild(&mut self, files: &[ChangedFile]) {
@@ -56,10 +60,7 @@ impl TreeNav {
                 if probe < 0 || probe > last {
                     break;
                 }
-                let skipped = self
-                    .tree
-                    .file_at(probe as usize)
-                    .is_some_and(&skip);
+                let skipped = self.tree.file_at(probe as usize).is_some_and(&skip);
                 if !skipped {
                     cursor = probe;
                     break;

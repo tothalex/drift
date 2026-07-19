@@ -25,7 +25,11 @@ pub struct DiffIndex {
 /// Unified-diff convention: a zero-count range's start is the line *before*
 /// the gap; the "next line" is start+1. For non-empty ranges it's start+count.
 fn end_exclusive(range: (u32, u32)) -> u32 {
-    if range.1 == 0 { range.0 + 1 } else { range.0 + range.1 }
+    if range.1 == 0 {
+        range.0 + 1
+    } else {
+        range.0 + range.1
+    }
 }
 
 impl DiffIndex {
@@ -58,7 +62,11 @@ impl DiffIndex {
             ));
         }
         deltas.sort_unstable();
-        DiffIndex { at, removed_before, deltas }
+        DiffIndex {
+            at,
+            removed_before,
+            deltas,
+        }
     }
 
     /// Old-side line number for a new-side line that is not inside any hunk.
@@ -87,7 +95,11 @@ impl DiffIndex {
                     kind: LineKind::Context,
                     old_lineno: Some(self.old_for_new(n)),
                     new_lineno: Some(n),
-                    content: file_lines.get(n as usize - 1).copied().unwrap_or("").to_string(),
+                    content: file_lines
+                        .get(n as usize - 1)
+                        .copied()
+                        .unwrap_or("")
+                        .to_string(),
                 },
             };
             out.push(ViewLine::diff(line));
@@ -156,7 +168,9 @@ pub fn collapse(lines: Vec<ViewLine>, threshold: usize, keep: usize) -> Vec<View
             let tail = run.split_off(run.len() - keep);
             let collapsed = run.split_off(keep);
             out.append(run);
-            out.push(ViewLine::Collapsed { count: collapsed.len() as u32 });
+            out.push(ViewLine::Collapsed {
+                count: collapsed.len() as u32,
+            });
             out.extend(tail);
         } else {
             out.append(run);
@@ -179,8 +193,8 @@ pub fn collapse(lines: Vec<ViewLine>, threshold: usize, keep: usize) -> Vec<View
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vcs::unidiff;
     use crate::vcs::model::FileDiff;
+    use crate::vcs::unidiff;
 
     fn hunks_of(patch: &str) -> Vec<Hunk> {
         match unidiff::parse(patch) {
@@ -233,7 +247,9 @@ fn alpha() {
                 LineKind::Context, // }  ← beyond hunk, from file
             ]
         );
-        let ViewLine::Diff { line: last, .. } = &lines[6] else { unreachable!() };
+        let ViewLine::Diff { line: last, .. } = &lines[6] else {
+            unreachable!()
+        };
         assert_eq!(last.content, "}");
         assert_eq!(last.old_lineno, Some(6)); // same-size change: no shift
     }
@@ -244,7 +260,9 @@ fn alpha() {
         let hunks = hunks_of("@@ -1,1 +1,3 @@\n+one\n+two\n three");
         let index = DiffIndex::new(&hunks);
         let lines = index.splice((4, 4), &["one", "two", "three", "four"]);
-        let ViewLine::Diff { line, .. } = &lines[0] else { panic!() };
+        let ViewLine::Diff { line, .. } = &lines[0] else {
+            panic!()
+        };
         assert_eq!(line.old_lineno, Some(2));
         assert_eq!(line.new_lineno, Some(4));
     }
@@ -282,9 +300,8 @@ fn alpha() {
 
     #[test]
     fn separate_changes_in_one_hunk_become_separate_segments() {
-        let hunks = hunks_of(
-            "@@ -1,7 +1,8 @@\n ctx\n+first\n ctx\n ctx\n-old\n+second\n ctx\n ctx",
-        );
+        let hunks =
+            hunks_of("@@ -1,7 +1,8 @@\n ctx\n+first\n ctx\n ctx\n-old\n+second\n ctx\n ctx");
         // The removal anchors to the line before its gap (4).
         assert_eq!(change_segments(&hunks[0]), vec![(2, 2), (4, 5)]);
     }

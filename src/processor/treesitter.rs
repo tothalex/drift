@@ -193,7 +193,12 @@ impl<'a> TsResolver<'a> {
 
         let mut line_starts = vec![0];
         line_starts.extend(source.match_indices('\n').map(|(i, _)| i + 1));
-        Some(TsResolver { source, tree, spec, line_starts })
+        Some(TsResolver {
+            source,
+            tree,
+            spec,
+            line_starts,
+        })
     }
 
     pub(super) fn tree(&self) -> &Tree {
@@ -214,7 +219,9 @@ impl<'a> TsResolver<'a> {
     /// Byte range (inclusive start, exclusive end) of 1-based line `n`,
     /// clamped to the file.
     fn line_bytes(&self, n: u32) -> (usize, usize) {
-        let i = (n as usize).saturating_sub(1).min(self.line_starts.len() - 1);
+        let i = (n as usize)
+            .saturating_sub(1)
+            .min(self.line_starts.len() - 1);
         let start = self.line_starts[i];
         let end = self
             .line_starts

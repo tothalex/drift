@@ -10,9 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use gix::bstr::ByteSlice;
-use gix::status::index_worktree::iter::Summary;
-use gix::status::index_worktree::Item;
 use gix::status::UntrackedFiles;
+use gix::status::index_worktree::Item;
+use gix::status::index_worktree::iter::Summary;
 use imara_diff::{Algorithm, Diff, InternedInput};
 
 use crate::vcs::model::{
@@ -91,13 +91,12 @@ impl Vcs for GixVcs {
         let base_id = self
             .rev_commit_id(&base)
             .ok_or_else(|| VcsError::RevisionNotFound(base.clone()))?;
-        let ancestor = self
-            .repo
-            .merge_base(base_id, head.detach())
-            .map_err(|_| VcsError::NoCommonAncestor {
+        let ancestor = self.repo.merge_base(base_id, head.detach()).map_err(|_| {
+            VcsError::NoCommonAncestor {
                 base: base.clone(),
                 work: "HEAD".to_string(),
-            })?;
+            }
+        })?;
         let work_label = self
             .repo
             .head_name()
@@ -158,8 +157,14 @@ impl Vcs for GixVcs {
             let path = PathBuf::from(item.rela_path().to_str_lossy().into_owned());
             let (status, old_path) = match (summary, &item) {
                 (Summary::Renamed | Summary::Copied, Item::Rewrite { source, copy, .. }) => (
-                    if *copy { FileStatus::Copied } else { FileStatus::Renamed },
-                    Some(PathBuf::from(source.rela_path().to_str_lossy().into_owned())),
+                    if *copy {
+                        FileStatus::Copied
+                    } else {
+                        FileStatus::Renamed
+                    },
+                    Some(PathBuf::from(
+                        source.rela_path().to_str_lossy().into_owned(),
+                    )),
                 ),
                 (Summary::Removed, _) => (FileStatus::Deleted, None),
                 // The ancestor-as-index makes committed additions and
@@ -176,7 +181,11 @@ impl Vcs for GixVcs {
                 (Summary::IntentToAdd, _) => (FileStatus::Added, None),
                 _ => (FileStatus::Modified, None),
             };
-            files.push(ChangedFile { status, path, old_path });
+            files.push(ChangedFile {
+                status,
+                path,
+                old_path,
+            });
         }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
@@ -265,7 +274,10 @@ fn compute_file_diff(old_text: &str, new_text: &str) -> FileDiff {
     for hunk in diff.hunks() {
         match groups.last_mut() {
             Some(group)
-                if hunk.before.start.saturating_sub(group.last().unwrap().before.end)
+                if hunk
+                    .before
+                    .start
+                    .saturating_sub(group.last().unwrap().before.end)
                     <= 2 * CONTEXT =>
             {
                 group.push(hunk);

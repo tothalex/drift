@@ -129,14 +129,17 @@ mod tests {
     fn flat_lines_inserts_separators_between_sections() {
         let view = FileView::Sections {
             sections: vec![
-                Section { lines: vec![diff_line("a"), diff_line("b")] },
-                Section { lines: vec![diff_line("c")] },
+                Section {
+                    lines: vec![diff_line("a"), diff_line("b")],
+                },
+                Section {
+                    lines: vec![diff_line("c")],
+                },
             ],
             scope_max: 0,
             diffstat: (0, 0),
         };
-        let contents: Vec<Option<&str>> =
-            view.flat_lines().map(|fl| fl.content()).collect();
+        let contents: Vec<Option<&str>> = view.flat_lines().map(|fl| fl.content()).collect();
         assert_eq!(contents, vec![Some("a"), Some("b"), Some(""), Some("c")]);
         assert_eq!(view.flat_len(), 4);
     }
@@ -147,7 +150,10 @@ mod tests {
             sections: vec![Section {
                 lines: vec![
                     ViewLine::Collapsed { count: 5 },
-                    ViewLine::CommentFold { count: 3, summary: String::new() },
+                    ViewLine::CommentFold {
+                        count: 3,
+                        summary: String::new(),
+                    },
                 ],
             }],
             scope_max: 0,

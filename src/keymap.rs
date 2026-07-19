@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use crossterm::event::{KeyCode, KeyModifiers};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,22 +165,43 @@ impl Default for Keymap {
 
 /// Help rows: which actions share a row, and the description.
 const HELP: &[(&[Action], &str)] = &[
-    (&[Action::NextFile, Action::PrevFile], "next / previous file (skips reviewed)"),
+    (
+        &[Action::NextFile, Action::PrevFile],
+        "next / previous file (skips reviewed)",
+    ),
     (&[Action::CheckFile], "check file as reviewed, go to next"),
     (&[Action::UncheckLast], "uncheck the last review, jump back"),
     (&[Action::ToggleDir], "open / close folder"),
     (&[Action::Search], "search the file tree"),
-    (&[Action::NextMatch, Action::PrevMatch], "next / previous match"),
-    (&[Action::CursorDown, Action::CursorUp], "move the code cursor"),
+    (
+        &[Action::NextMatch, Action::PrevMatch],
+        "next / previous match",
+    ),
+    (
+        &[Action::CursorDown, Action::CursorUp],
+        "move the code cursor",
+    ),
     (&[Action::JumpDown, Action::JumpUp], "jump 15 lines"),
-    (&[Action::JumpTop, Action::JumpBottom], "jump to top / bottom (10G: line 10)"),
+    (
+        &[Action::JumpTop, Action::JumpBottom],
+        "jump to top / bottom (10G: line 10)",
+    ),
     (&[Action::Yank], "copy line / selection"),
     (&[Action::CopyPath], "copy the file path"),
     (&[Action::Visual], "select lines (visual mode)"),
-    (&[Action::ScopeWiden, Action::ScopeNarrow], "widen / narrow block scope"),
-    (&[Action::ToggleCollapse], "collapse / expand unchanged lines"),
+    (
+        &[Action::ScopeWiden, Action::ScopeNarrow],
+        "widen / narrow block scope",
+    ),
+    (
+        &[Action::ToggleCollapse],
+        "collapse / expand unchanged lines",
+    ),
     (&[Action::ToggleCommentFold], "fold / unfold comment blocks"),
-    (&[Action::GrowTree, Action::ShrinkTree], "resize panes (or drag the gap)"),
+    (
+        &[Action::GrowTree, Action::ShrinkTree],
+        "resize panes (or drag the gap)",
+    ),
     (&[Action::PickBase], "choose the base branch"),
     (&[Action::Refresh], "refresh"),
     (&[Action::Quit], "quit"),
@@ -258,18 +279,14 @@ mod tests {
 
     #[test]
     fn overrides_replace_defaults() {
-        let overrides =
-            HashMap::from([("next_file".to_string(), vec!["tab".to_string()])]);
+        let overrides = HashMap::from([("next_file".to_string(), vec!["tab".to_string()])]);
         let map = Keymap::from_overrides(&overrides).unwrap();
         assert_eq!(
             map.action_for(KeyCode::Tab, KeyModifiers::NONE),
             Some(Action::NextFile)
         );
         // The default 'l' no longer maps to next_file.
-        assert_eq!(
-            map.action_for(KeyCode::Char('l'), KeyModifiers::NONE),
-            None
-        );
+        assert_eq!(map.action_for(KeyCode::Char('l'), KeyModifiers::NONE), None);
     }
 
     #[test]

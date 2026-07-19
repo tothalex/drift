@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use crate::keymap::{Keymap, KEY_DEFAULTS};
-use crate::theme::{Theme, THEME_DEFAULTS};
+use crate::keymap::{KEY_DEFAULTS, Keymap};
+use crate::theme::{THEME_DEFAULTS, Theme};
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +52,11 @@ pub fn load() -> Result<Config> {
         .with_context(|| format!("invalid [keys] in {}", path.display()))?;
     let theme = Theme::from_overrides(&file.theme)
         .with_context(|| format!("invalid [theme] in {}", path.display()))?;
-    Ok(Config { base: file.base, keymap, theme })
+    Ok(Config {
+        base: file.base,
+        keymap,
+        theme,
+    })
 }
 
 /// The full default configuration in file syntax, generated from the same

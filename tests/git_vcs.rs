@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::Command;
 
 use drift::vcs::model::{FileDiff, FileStatus, LineKind};
-use drift::vcs::{detect, VcsError};
+use drift::vcs::{VcsError, detect};
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
@@ -79,7 +79,10 @@ fn file_diff_returns_structured_hunks() {
     let cmp = vcs.comparison(Some("master")).unwrap();
     let files = vcs.changed_files(&cmp).unwrap();
 
-    let lib = files.iter().find(|f| f.path == Path::new("lib.rs")).unwrap();
+    let lib = files
+        .iter()
+        .find(|f| f.path == Path::new("lib.rs"))
+        .unwrap();
     let FileDiff::Text { hunks } = vcs.file_diff(&cmp, lib).unwrap() else {
         panic!("expected text diff");
     };
@@ -132,7 +135,10 @@ fn file_at_ancestor_returns_old_side_content() {
     let cmp = vcs.comparison(Some("master")).unwrap();
     let files = vcs.changed_files(&cmp).unwrap();
 
-    let lib = files.iter().find(|f| f.path == Path::new("lib.rs")).unwrap();
+    let lib = files
+        .iter()
+        .find(|f| f.path == Path::new("lib.rs"))
+        .unwrap();
     assert_eq!(
         vcs.file_at_ancestor(&cmp, lib).as_deref(),
         Some("fn main() {}\n")
@@ -223,10 +229,7 @@ fn branches_lists_local_branches() {
 #[test]
 fn non_repo_directory_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
-    assert!(matches!(
-        detect(tmp.path()),
-        Err(VcsError::NoRepository(_))
-    ));
+    assert!(matches!(detect(tmp.path()), Err(VcsError::NoRepository(_))));
 }
 
 #[test]

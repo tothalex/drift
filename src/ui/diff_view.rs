@@ -1,16 +1,15 @@
+use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
-use ratatui::Frame;
 
 use crate::app::App;
-use crate::theme::Theme;
 use crate::processor::comments;
 use crate::processor::highlight::{HighlightSpan, TokenKind};
-use crate::processor::view::{char_to_byte, FileView, FlatLine, ViewLine};
+use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
+use crate::theme::Theme;
 use crate::vcs::model::{DiffLine, LineKind};
-
 
 pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
     let theme = &app.theme;
@@ -20,7 +19,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
         .unwrap_or_else(|| "no changes".to_string());
 
     let mut header_spans = vec![Span::raw(title)];
-    if let Some(FileView::Sections { diffstat: (adds, dels), .. }) = app.current_view() {
+    if let Some(FileView::Sections {
+        diffstat: (adds, dels),
+        ..
+    }) = app.current_view()
+    {
         header_spans.push(Span::styled(
             format!("  +{adds}"),
             Style::default().fg(theme.added),
@@ -46,8 +49,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
     let max_scroll = total.saturating_sub(height);
     let centered = cursor.saturating_sub(height / 2).min(max_scroll);
     // Free-scroll (mouse wheel) offsets the centered position.
-    let scroll =
-        (centered as isize + app.code.view_offset).clamp(0, max_scroll as isize) as usize;
+    let scroll = (centered as isize + app.code.view_offset).clamp(0, max_scroll as isize) as usize;
     app.code.scroll = scroll;
 
     // Per-row styling: visual selection under the cursorline; the
@@ -81,13 +83,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
                     FlatLine::Separator => Line::default(),
                     FlatLine::Line(ViewLine::Collapsed { count }) => Line::styled(
                         format!("       ⋯ {count} unchanged lines"),
-                        Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC),
+                        Style::default()
+                            .fg(theme.muted)
+                            .add_modifier(Modifier::ITALIC),
                     ),
                     FlatLine::Line(ViewLine::CommentFold { count, summary }) => Line::styled(
                         format!("      ▏ {summary} ⋯ {count} lines"),
-                        Style::default().fg(theme.comment).add_modifier(Modifier::ITALIC),
+                        Style::default()
+                            .fg(theme.comment)
+                            .add_modifier(Modifier::ITALIC),
                     ),
-                    FlatLine::Line(ViewLine::Diff { line, spans, emph, comment }) => {
+                    FlatLine::Line(ViewLine::Diff {
+                        line,
+                        spans,
+                        emph,
+                        comment,
+                    }) => {
                         let sel = mouse_sel_range(mouse_sel, index, &line.content);
                         // Comment-only lines read as prose (flag
                         // precomputed by the processor); added/removed
@@ -118,7 +129,11 @@ fn mouse_sel_range(
     if index < l0 || index > l1 {
         return None;
     }
-    let start = if index == l0 { char_to_byte(content, c0) } else { 0 };
+    let start = if index == l0 {
+        char_to_byte(content, c0)
+    } else {
+        0
+    };
     let end = if index == l1 {
         char_to_byte(content, c1 + 1)
     } else {
@@ -135,9 +150,7 @@ fn render_comment_line(theme: &Theme, line: &DiffLine) -> Line<'static> {
         .fg(theme.comment)
         .add_modifier(Modifier::ITALIC);
     let (bar, accent, number) = gutter_parts(theme, line);
-    let number_style = accent.map_or(Style::default().fg(theme.muted), |c| {
-        Style::default().fg(c)
-    });
+    let number_style = accent.map_or(Style::default().fg(theme.muted), |c| Style::default().fg(c));
     let indent: String = line
         .content
         .chars()
@@ -177,15 +190,20 @@ fn render_diff_line(
         LineKind::Removed => theme.emph_removed_bg,
         LineKind::Context => Color::Reset,
     };
-    let number_style = accent.map_or(Style::default().fg(theme.muted), |c| {
-        Style::default().fg(c)
-    });
+    let number_style = accent.map_or(Style::default().fg(theme.muted), |c| Style::default().fg(c));
 
     let mut parts = vec![
         Span::styled(bar.to_string(), number_style),
         Span::styled(format!("{:>4} ", lineno(number)), number_style),
     ];
-    parts.extend(render_content(theme, &line.content, spans, emph, emph_bg, sel));
+    parts.extend(render_content(
+        theme,
+        &line.content,
+        spans,
+        emph,
+        emph_bg,
+        sel,
+    ));
     Line::from(parts)
 }
 

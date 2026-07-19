@@ -17,9 +17,7 @@ pub fn parse(text: &str) -> FileDiff {
     let mut new_no: u32 = 0;
 
     for raw in text.lines() {
-        if hunks.is_empty()
-            && (raw.starts_with("Binary files ") || raw == "GIT binary patch")
-        {
+        if hunks.is_empty() && (raw.starts_with("Binary files ") || raw == "GIT binary patch") {
             return FileDiff::Binary;
         }
         if let Some(hunk) = parse_hunk_header(raw) {
