@@ -9,6 +9,18 @@ working tree, so committed work, uncommitted edits, and untracked files
 all show up together. The base branch is auto-detected (`origin/HEAD`,
 then `main`, then `master`), and can be switched from inside the app.
 
+## Install
+
+```sh
+curl -fsSL https://tothalex.github.io/drift/install.sh | sh
+```
+
+Prebuilt binaries for macOS and Linux (x86_64/aarch64) land in
+`~/.local/bin` (override with `DRIFT_INSTALL_DIR`). Or build from source:
+see [Build](#build).
+
+## Usage
+
 ```sh
 drift              # review the current repo
 drift --base dev   # compare against a different base
