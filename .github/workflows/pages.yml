@@ -27,6 +27,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Creates the Pages site on first run, so no manual settings step.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - name: Assemble site
         run: |
           mkdir -p _site
