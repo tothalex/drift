@@ -4,6 +4,8 @@ A terminal UI for reviewing your working changes like a pull request:
 everything that differs from the base branch — committed or not — in one
 view.
 
+![drift reviewing a changeset](assets/screenshot.png)
+
 The comparison point is `git merge-base <base> HEAD`, diffed against the
 working tree, so committed work, uncommitted edits, and untracked files
 all show up together. The base branch is auto-detected (`origin/HEAD`,
