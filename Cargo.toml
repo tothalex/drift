@@ -2,6 +2,9 @@
 name = "drift"
 version = "0.1.0"
 edition = "2024"
+description = "Review your working changes like a pull request, in the terminal"
+license = "MIT"
+repository = "https://github.com/tothalex/drift"
 
 # Dev builds stay unoptimized for our own code (fast rebuilds), but
 # dependencies — tree-sitter's C grammars, query compilation — get -O2:
