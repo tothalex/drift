@@ -267,9 +267,8 @@ fn render_content(
     parts
 }
 
-/// One Dark-flavored syntax palette (256-indexed approximations of the
-/// theme the user runs in their editor), soft enough that the green/red
-/// change accents stay the loudest signal.
+/// One Dark syntax palette (onedarkpro's `onedark_dark` hex values), soft
+/// enough that the green/red change accents stay the loudest signal.
 fn token_style(theme: &Theme, token: TokenKind) -> Style {
     match token {
         TokenKind::Keyword => Style::default().fg(theme.keyword),
@@ -278,6 +277,7 @@ fn token_style(theme: &Theme, token: TokenKind) -> Style {
         TokenKind::String => Style::default().fg(theme.string),
         TokenKind::Number | TokenKind::Constant => Style::default().fg(theme.number),
         TokenKind::Property => Style::default().fg(theme.property),
+        TokenKind::Variable => Style::default().fg(theme.variable),
         TokenKind::Attribute => Style::default().fg(theme.attribute),
         TokenKind::Comment => Style::default()
             .fg(theme.comment)

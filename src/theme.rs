@@ -44,6 +44,7 @@ pub struct Theme {
     pub number: Color,
     pub property: Color,
     pub attribute: Color,
+    pub variable: Color,
 }
 
 /// Default values, in config-file syntax — the single source for both the
@@ -58,19 +59,21 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     ("select_bg", "238"),
     ("tree_cursor_bg", "darkgray"),
     ("muted", "darkgray"),
-    ("comment", "241"),
+    ("comment", "#7f848e"),
     ("tag", "179"),
     ("search", "179"),
     ("panel_bg", "235"),
     ("visual_badge_fg", "black"),
     ("visual_badge_bg", "yellow"),
-    ("keyword", "176"),
-    ("function", "75"),
-    ("type", "180"),
-    ("string", "114"),
-    ("number", "173"),
-    ("property", "73"),
-    ("attribute", "180"),
+    // Syntax defaults follow onedarkpro's `onedark_dark` palette.
+    ("keyword", "#d55fde"),
+    ("function", "#61afef"),
+    ("type", "#e5c07b"),
+    ("string", "#89ca78"),
+    ("number", "#d19a66"),
+    ("property", "#ef596f"),
+    ("attribute", "#d55fde"),
+    ("variable", "#ef596f"),
 ];
 
 impl Theme {
@@ -122,6 +125,7 @@ impl Theme {
             number: resolve("number")?,
             property: resolve("property")?,
             attribute: resolve("attribute")?,
+            variable: resolve("variable")?,
         })
     }
 }

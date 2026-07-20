@@ -25,6 +25,7 @@ pub enum TokenKind {
     Property,
     String,
     Type,
+    Variable,
 }
 
 /// Capture names we recognize, with the token each maps to. Dotted capture
@@ -43,7 +44,10 @@ const CAPTURES: &[(&str, TokenKind)] = &[
     ("string", TokenKind::String),
     ("tag", TokenKind::Function),
     ("type", TokenKind::Type),
-    ("variable.builtin", TokenKind::Keyword),
+    ("variable", TokenKind::Variable),
+    // Builtins (`this`, `self`) take the type color, like onedarkpro's
+    // yellow `@variable.builtin`.
+    ("variable.builtin", TokenKind::Type),
 ];
 
 fn token_for_capture(name: &str) -> Option<TokenKind> {
