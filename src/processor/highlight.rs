@@ -31,6 +31,10 @@ pub enum TokenKind {
     Arrow,
     /// Brackets: `()`, `{}`, `[]`.
     Bracket,
+    /// Delimiters and interpolation markers (`.`, `,`, `;`, `${`, `}`) —
+    /// rendered as plain foreground, which also stops a template
+    /// literal's string color from bleeding across its `${…}` holes.
+    Punctuation,
 }
 
 /// Capture names we recognize, with the token each maps to. Dotted capture
@@ -49,6 +53,8 @@ const CAPTURES: &[(&str, TokenKind)] = &[
     ("operator", TokenKind::Operator),
     ("property", TokenKind::Property),
     ("punctuation.bracket", TokenKind::Bracket),
+    ("punctuation.delimiter", TokenKind::Punctuation),
+    ("punctuation.special", TokenKind::Punctuation),
     ("string", TokenKind::String),
     ("tag", TokenKind::Function),
     ("type", TokenKind::Type),
@@ -67,6 +73,10 @@ impl TokenKind {
     /// variable reads.
     fn rank(self) -> u8 {
         match self {
+            // A template substitution's `}` is captured as both a bracket
+            // and interpolation punctuation; the foreground punctuation
+            // must win so it doesn't render as a stray purple bracket.
+            TokenKind::Punctuation => 7,
             // Names with a distinct role, most specific first.
             TokenKind::Function => 5,
             TokenKind::Type => 4,
@@ -185,20 +195,30 @@ pub(crate) fn highlight_tree(
     collected.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
     collected.dedup();
 
+    // Collapse captures over the exact same bytes to a single token by
+    // precedence (a name is often captured several ways at once). Doing
+    // it here, before the nesting pass, is what keeps it correct: an
+    // enclosing span (a template string over its `${…}`) otherwise splits
+    // and pushes a fragment between two identical-range captures, so they
+    // never become adjacent for the nesting pass to merge.
+    let mut merged: Vec<(usize, usize, TokenKind)> = Vec::with_capacity(collected.len());
+    for (start, end, token) in collected {
+        match merged.last_mut() {
+            Some(last) if last.0 == start && last.1 == end => {
+                if token.rank() >= last.2.rank() {
+                    last.2 = token;
+                }
+            }
+            _ => merged.push((start, end, token)),
+        }
+    }
+
     // Resolve nesting: inner (later-starting) captures win, splitting the
     // outer span around them — matching editor semantics.
     let mut flat: Vec<(usize, usize, TokenKind)> = Vec::new();
-    for (start, end, token) in collected {
+    for (start, end, token) in merged {
         match flat.last_mut() {
             Some(last) if last.1 > start => {
-                if last.0 == start && last.1 == end {
-                    // Identical range: the higher-precedence role wins
-                    // (ties keep the later pattern, as editors do).
-                    if token.rank() >= last.2.rank() {
-                        last.2 = token;
-                    }
-                    continue;
-                }
                 let tail = (end, last.1, last.2);
                 last.1 = start;
                 if last.1 == last.0 {
@@ -351,6 +371,32 @@ mod tests {
         assert_eq!(token_of(1, "JSON"), Some(TokenKind::Type));
         assert_eq!(token_of(1, "="), Some(TokenKind::Operator));
         assert_eq!(token_of(2, "StockLockTier"), Some(TokenKind::Type));
+    }
+
+    #[test]
+    fn template_interpolation_does_not_overlap_or_bleed() {
+        // The string spans the whole `` `…${…}` ``; the interpolation must
+        // punch clean, non-overlapping holes so code inside is not green.
+        let source = "const s = `R-${Date.now()}`;\n";
+        let hl = highlight(Path::new("x.ts"), source).expect("ts highlights");
+        let spans = hl.spans_for(1);
+        for pair in spans.windows(2) {
+            assert!(
+                pair[0].end <= pair[1].start,
+                "overlapping spans: {:?} then {:?}",
+                pair[0],
+                pair[1]
+            );
+        }
+        let line = source.lines().next().unwrap();
+        let token_at = |needle: &str| {
+            let at = line.find(needle).unwrap();
+            spans.iter().find(|s| s.start == at).map(|s| s.token)
+        };
+        assert_eq!(token_at("${"), Some(TokenKind::Punctuation));
+        assert_eq!(token_at("Date"), Some(TokenKind::Type));
+        // The `.` inside the interpolation is punctuation, not string green.
+        assert_eq!(token_at("."), Some(TokenKind::Punctuation));
     }
 
     #[test]

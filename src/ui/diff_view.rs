@@ -285,6 +285,7 @@ fn token_style(theme: &Theme, token: TokenKind) -> Style {
         TokenKind::Operator => Style::default().fg(theme.operator),
         TokenKind::Arrow => Style::default().fg(theme.arrow),
         TokenKind::Bracket => Style::default().fg(theme.bracket),
+        TokenKind::Punctuation => Style::default().fg(theme.punctuation),
     }
 }
 
