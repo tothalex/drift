@@ -105,6 +105,19 @@ const TS_BLOCK_KINDS: &[&str] = &[
     "try_statement",
 ];
 
+/// Supplement to the grammar-bundled Rust query, closing the visible gaps
+/// against nvim-treesitter's richer queries: plain identifiers are
+/// variables (red in onedark), and `path::segments` take the type color.
+/// Same-range collisions resolve by token precedence, so the bundled
+/// query's more specific captures (functions, types, macros) still win.
+const RUST_EXTRA_HIGHLIGHTS: &str = "
+(identifier) @variable
+(scoped_identifier (identifier) @type)
+(scoped_use_list path: (identifier) @type)
+(use_declaration (identifier) @type)
+(arguments [\"(\" \")\"] @punctuation.bracket.call)
+";
+
 const LANGUAGES: &[LangSpec] = &[
     LangSpec {
         name: "rust",
@@ -124,7 +137,7 @@ const LANGUAGES: &[LangSpec] = &[
             "loop_expression",
             "match_expression",
         ],
-        highlight_queries: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
+        highlight_queries: &[tree_sitter_rust::HIGHLIGHTS_QUERY, RUST_EXTRA_HIGHLIGHTS],
     },
     LangSpec {
         name: "python",

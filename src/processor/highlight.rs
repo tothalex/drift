@@ -31,6 +31,9 @@ pub enum TokenKind {
     Arrow,
     /// Brackets: `()`, `{}`, `[]`.
     Bracket,
+    /// Call-argument parens — onedark colors these apart from other
+    /// brackets in some languages (purple in Rust).
+    CallBracket,
     /// Delimiters and interpolation markers (`.`, `,`, `;`, `${`, `}`) —
     /// rendered as plain foreground, which also stops a template
     /// literal's string color from bleeding across its `${…}` holes.
@@ -53,6 +56,7 @@ const CAPTURES: &[(&str, TokenKind)] = &[
     ("operator", TokenKind::Operator),
     ("property", TokenKind::Property),
     ("punctuation.bracket", TokenKind::Bracket),
+    ("punctuation.bracket.call", TokenKind::CallBracket),
     ("punctuation.delimiter", TokenKind::Punctuation),
     ("punctuation.special", TokenKind::Punctuation),
     ("string", TokenKind::String),
@@ -73,6 +77,9 @@ impl TokenKind {
     /// variable reads.
     fn rank(self) -> u8 {
         match self {
+            // Call-argument parens are also captured as plain brackets by
+            // the grammar's own query; the context-specific role wins.
+            TokenKind::CallBracket => 8,
             // A template substitution's `}` is captured as both a bracket
             // and interpolation punctuation; the foreground punctuation
             // must win so it doesn't render as a stray purple bracket.
@@ -397,6 +404,29 @@ mod tests {
         assert_eq!(token_at("Date"), Some(TokenKind::Type));
         // The `.` inside the interpolation is punctuation, not string green.
         assert_eq!(token_at("."), Some(TokenKind::Punctuation));
+    }
+
+    #[test]
+    fn rust_extra_query_fills_bundled_gaps() {
+        // The bundled rust query captures no plain identifiers and no
+        // call-paren context; the supplemental query provides both.
+        let source = "use std::collections::HashMap;\nlet counts = HashMap::new();\n";
+        let hl = highlight(Path::new("x.rs"), source).expect("rust highlights");
+        let token_of = |lineno: u32, needle: &str| {
+            let line = source.lines().nth(lineno as usize - 1).unwrap();
+            let at = line.find(needle).unwrap();
+            hl.spans_for(lineno)
+                .iter()
+                .find(|s| s.start <= at && at < s.end)
+                .map(|s| s.token)
+        };
+        // Path segments and the imported name take the type color.
+        assert_eq!(token_of(1, "std"), Some(TokenKind::Type));
+        assert_eq!(token_of(1, "HashMap"), Some(TokenKind::Type));
+        // Plain identifiers are variables.
+        assert_eq!(token_of(2, "counts"), Some(TokenKind::Variable));
+        // Call-argument parens get their own themable token.
+        assert_eq!(token_of(2, "()"), Some(TokenKind::CallBracket));
     }
 
     #[test]

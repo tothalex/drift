@@ -294,6 +294,7 @@ fn token_style(theme: &Theme, lang: Option<&HashMap<String, Color>>, token: Toke
         TokenKind::Operator => ("operator", theme.operator),
         TokenKind::Arrow => ("arrow", theme.arrow),
         TokenKind::Bracket => ("bracket", theme.bracket),
+        TokenKind::CallBracket => ("bracket_call", theme.bracket_call),
         TokenKind::Punctuation => ("punctuation", theme.punctuation),
     };
     let color = lang.and_then(|m| m.get(key)).copied().unwrap_or(base);

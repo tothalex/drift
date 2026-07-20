@@ -48,6 +48,7 @@ pub struct Theme {
     pub operator: Color,
     pub arrow: Color,
     pub bracket: Color,
+    pub bracket_call: Color,
     pub punctuation: Color,
     /// Per-language syntax overrides: language name → key → color.
     lang: HashMap<String, HashMap<String, Color>>,
@@ -86,6 +87,7 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     // and Python; only languages without an override (Go) keep the
     // global purple — see THEME_LANG_DEFAULTS.
     ("bracket", "#d19a66"),
+    ("bracket_call", "#d19a66"),
     ("punctuation", "#abb2bf"),
 ];
 
@@ -103,14 +105,20 @@ pub const SYNTAX_KEYS: &[&str] = &[
     "operator",
     "arrow",
     "bracket",
+    "bracket_call",
     "punctuation",
     "comment",
 ];
 
 /// Per-language default overrides, in config-file syntax. onedark colors
 /// some tokens differently per language: brackets are orange in TS/JS,
-/// Rust, and Python (the base default) but purple in Go.
-pub const THEME_LANG_DEFAULTS: &[(&str, &str, &str)] = &[("go", "bracket", "#d55fde")];
+/// Rust, and Python (the base default) but purple in Go, and Rust
+/// operators are plain foreground (`@operator.rust`), not cyan.
+pub const THEME_LANG_DEFAULTS: &[(&str, &str, &str)] = &[
+    ("go", "bracket", "#d55fde"),
+    ("rust", "operator", "#abb2bf"),
+    ("rust", "bracket_call", "#d55fde"),
+];
 
 impl Theme {
     /// Syntax colors for one language: defaults overlaid with the user's
@@ -212,6 +220,7 @@ impl Theme {
             operator: resolve("operator")?,
             arrow: resolve("arrow")?,
             bracket: resolve("bracket")?,
+            bracket_call: resolve("bracket_call")?,
             punctuation: resolve("punctuation")?,
             lang,
         })

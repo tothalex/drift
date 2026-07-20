@@ -39,10 +39,13 @@ The checker makes the ceiling concrete rather than a guess:
   drift has only tree-sitter, so it can't reproduce these. Reported
   separately and never counted as a fixable diff.
 - **Context-dependent colors** — onedarkpro varies a color by syntactic
-  position within one language (Rust call-argument parens are purple
-  while its other brackets are orange). drift's `[theme.<lang>]`
-  sections cover per-language differences (Go's purple brackets vs the
-  orange default), but not per-position ones.
+  position within one language. The recurring cases are handled: drift's
+  `[theme.<lang>]` sections cover per-language differences (Go's purple
+  brackets, Rust's foreground operators), and dedicated tokens cover
+  positional ones (`arrow` for `=>`, `bracket_call` for call-argument
+  parens — purple in Rust). Rarer positional rules remain unmatched.
 - **Query richness** — nvim-treesitter ships richer queries than the
-  grammar-bundled ones drift compiles, so some tokens (`void`, Rust `use`
-  path segments, a few operators) land on a different capture.
+  grammar-bundled ones drift compiles. Rust is patched to parity with a
+  supplemental query (variables, path segments, call parens — zero
+  tree-sitter diffs on the sample); TypeScript has a residue (`void` is
+  keyword-colored, nvim shows it as a type).

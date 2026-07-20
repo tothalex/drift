@@ -30,6 +30,7 @@ fn token_color(theme: &Theme, lang: Option<&str>, token: TokenKind) -> Color {
         TokenKind::Operator => ("operator", theme.operator),
         TokenKind::Arrow => ("arrow", theme.arrow),
         TokenKind::Bracket => ("bracket", theme.bracket),
+        TokenKind::CallBracket => ("bracket_call", theme.bracket_call),
         TokenKind::Punctuation => ("punctuation", theme.punctuation),
     };
     lang.and_then(|l| theme.for_lang(l))
