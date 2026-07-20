@@ -79,24 +79,26 @@ impl TokenKind {
         match self {
             // Call-argument parens are also captured as plain brackets by
             // the grammar's own query; the context-specific role wins.
-            TokenKind::CallBracket => 10,
+            TokenKind::CallBracket => 11,
             // A template substitution's `}` is captured as both a bracket
             // and interpolation punctuation; the foreground punctuation
             // must win so it doesn't render as a stray purple bracket.
-            TokenKind::Punctuation => 9,
+            TokenKind::Punctuation => 10,
             // A decorator name is also a type and a call (`@Injectable`);
             // the attribute role wins, like nvim's capture order.
-            TokenKind::Attribute => 8,
-            // Names with a distinct role, most specific first. Type sits
-            // above the generic bucket so `void` — a keyword token AND a
-            // predefined type — takes the type color, as editors show it.
-            TokenKind::Function => 7,
+            TokenKind::Attribute => 9,
+            // Names with a distinct role, most specific first: calls beat
+            // constants (`MAX(…)`), SCREAMING_CASE constants and enum
+            // variants beat plain types, and Type sits above the generic
+            // bucket so `void` — a keyword token AND a predefined type —
+            // takes the type color, as editors show it.
+            TokenKind::Function => 8,
+            TokenKind::Constant => 7,
             TokenKind::Type => 6,
             // Below the generic bucket: a token that is an operator to
             // the grammar but a bracket/keyword in context (generic
             // `<` `>`, `export *`) takes the contextual color.
             TokenKind::Operator => 4,
-            TokenKind::Constant => 3,
             TokenKind::Property => 2,
             TokenKind::Variable => 1,
             // Everything else (keywords, strings, numbers, operators…)
@@ -210,6 +212,25 @@ pub(crate) fn highlight_tree(
                 // query itself.
                 if token == TokenKind::Function && &source[start..end] == "constructor" {
                     token = TokenKind::Type;
+                }
+                // Rust enum-variant constructors: `Some(x)` is a call to
+                // the grammar, but editors color the variant like a
+                // builtin constant (yellow), not a function.
+                if token == TokenKind::Function
+                    && spec.name == "rust"
+                    && matches!(&source[start..end], "Some" | "None" | "Ok" | "Err")
+                {
+                    token = TokenKind::Type;
+                }
+                // `null`/`undefined` are grammar constants but render as
+                // keywords (purple) in editors. Ranks can't express this
+                // without breaking SCREAMING_CASE constants: keyword must
+                // beat constant here, constant beats type elsewhere, and
+                // type beats keyword for `void` — a cycle.
+                if token == TokenKind::Constant
+                    && matches!(&source[start..end], "null" | "undefined")
+                {
+                    token = TokenKind::Keyword;
                 }
                 collected.push((start, end, token));
             }
@@ -391,7 +412,9 @@ mod tests {
                 .map(|s| s.token)
         };
         assert_eq!(token_of(1, "parse"), Some(TokenKind::Function));
-        assert_eq!(token_of(1, "JSON"), Some(TokenKind::Type));
+        // ALL-CAPS names read as constants (the grammar's own heuristic),
+        // which outranks their type capture.
+        assert_eq!(token_of(1, "JSON"), Some(TokenKind::Constant));
         assert_eq!(token_of(1, "="), Some(TokenKind::Operator));
         assert_eq!(token_of(2, "StockLockTier"), Some(TokenKind::Type));
     }
@@ -470,6 +493,28 @@ mod tests {
         assert_eq!(token_of(2, "counts"), Some(TokenKind::Variable));
         // Call-argument parens get their own themable token.
         assert_eq!(token_of(2, "()"), Some(TokenKind::CallBracket));
+    }
+
+    #[test]
+    fn rust_editor_conventions_match() {
+        let source = "static MAX: u8 = 1;\nfn f<'a>(x: Option<&'a str>) -> u8 {\n    match x { Some(_) => MAX, _ => 0 }\n}\n";
+        let hl = highlight(Path::new("x.rs"), source).expect("rust highlights");
+        let token_of = |lineno: u32, needle: &str| {
+            let line = source.lines().nth(lineno as usize - 1).unwrap();
+            let at = line.find(needle).unwrap();
+            hl.spans_for(lineno)
+                .iter()
+                .find(|s| s.start <= at && at < s.end)
+                .map(|s| s.token)
+        };
+        // SCREAMING_CASE names read as constants, beating type captures.
+        assert_eq!(token_of(1, "MAX"), Some(TokenKind::Constant));
+        // Lifetimes: quote as keyword, name as attribute (both purple).
+        assert_eq!(token_of(2, "'a"), Some(TokenKind::Keyword));
+        // Enum-variant constructors take the type color, not the call color.
+        assert_eq!(token_of(3, "Some"), Some(TokenKind::Type));
+        // The wildcard pattern reads as a keyword.
+        assert_eq!(token_of(3, "_ =>"), Some(TokenKind::Keyword));
     }
 
     #[test]

@@ -116,6 +116,21 @@ const RUST_EXTRA_HIGHLIGHTS: &str = "
 (scoped_use_list path: (identifier) @type)
 (use_declaration (identifier) @type)
 (arguments [\"(\" \")\"] @punctuation.bracket.call)
+((identifier) @type (#any-of? @type \"Some\" \"None\" \"Ok\" \"Err\"))
+(crate) @type
+(attribute (identifier) @function)
+((token_tree (identifier) @type) (#match? @type \"^[A-Z]\"))
+(mod_item name: (identifier) @type)
+(enum_variant name: (identifier) @constant)
+((identifier) @constant (#match? @constant \"^[A-Z][A-Z0-9_]*$\"))
+(lifetime \"'\" @keyword)
+(lifetime (identifier) @attribute)
+(scoped_type_identifier path: (identifier) @type)
+(closure_parameters \"|\" @punctuation.bracket)
+(match_pattern (scoped_identifier name: (identifier) @constant))
+(let_condition (scoped_identifier name: (identifier) @constant))
+(tuple_struct_pattern type: (scoped_identifier name: (identifier) @constant))
+\"_\" @keyword
 ";
 
 /// Supplement to the JS/TS queries: the bundled ones have no decorator
@@ -127,7 +142,6 @@ const TS_JS_EXTRA_HIGHLIGHTS: &str = "
 (decorator (identifier) @attribute)
 (decorator (call_expression function: (identifier) @attribute))
 (decorator (call_expression function: (member_expression) @attribute))
-[(null) (undefined)] @keyword
 (namespace_export \"*\" @keyword)
 (namespace_export (identifier) @type)
 (ternary_expression [\"?\" \":\"] @keyword)

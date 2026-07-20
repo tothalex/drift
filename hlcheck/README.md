@@ -47,7 +47,9 @@ The checker makes the ceiling concrete rather than a guess:
 - **Query richness** — nvim-treesitter ships richer queries than the
   grammar-bundled ones drift compiles. Rust and TypeScript are patched
   to parity with supplemental queries (variables, path segments, call
-  parens, decorators, `void`/`null`/`undefined`, generics, ternaries —
-  zero tree-sitter diffs on the samples). The one known residue is
-  nvim's ALL-CAPS-constant regex heuristic (`import { A }` renders
-  orange there), which needs predicate evaluation drift doesn't do.
+  parens, decorators, keywords, constants, enum variants, lifetimes,
+  attributes, generics, ternaries — zero tree-sitter diffs on the
+  samples, including keyword kitchen sinks covering every keyword of
+  both languages). The one known residue: nvim colors `import { A }`
+  orange via its ALL-CAPS-constant heuristic while drift's type capture
+  wins for single letters in plain imports.
