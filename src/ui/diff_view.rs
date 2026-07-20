@@ -283,6 +283,8 @@ fn token_style(theme: &Theme, token: TokenKind) -> Style {
             .fg(theme.comment)
             .add_modifier(Modifier::ITALIC),
         TokenKind::Operator => Style::default().fg(theme.operator),
+        TokenKind::Arrow => Style::default().fg(theme.arrow),
+        TokenKind::Bracket => Style::default().fg(theme.bracket),
     }
 }
 

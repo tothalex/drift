@@ -26,6 +26,11 @@ pub enum TokenKind {
     String,
     Type,
     Variable,
+    /// The `=>` fat arrow — its own token so it can be themed apart from
+    /// other operators, the way onedark paints it.
+    Arrow,
+    /// Brackets: `()`, `{}`, `[]`.
+    Bracket,
 }
 
 /// Capture names we recognize, with the token each maps to. Dotted capture
@@ -43,6 +48,7 @@ const CAPTURES: &[(&str, TokenKind)] = &[
     ("number", TokenKind::Number),
     ("operator", TokenKind::Operator),
     ("property", TokenKind::Property),
+    ("punctuation.bracket", TokenKind::Bracket),
     ("string", TokenKind::String),
     ("tag", TokenKind::Function),
     ("type", TokenKind::Type),
@@ -162,11 +168,17 @@ pub(crate) fn highlight_tree(
         let mut matches = cursor.matches(&compiled.query, tree.root_node(), source.as_bytes());
         while let Some(m) = matches.next() {
             for capture in m.captures {
-                let Some(token) = compiled.tokens[capture.index as usize] else {
+                let Some(mut token) = compiled.tokens[capture.index as usize] else {
                     continue;
                 };
                 let node = capture.node;
-                collected.push((node.start_byte(), node.end_byte(), token));
+                let (start, end) = (node.start_byte(), node.end_byte());
+                // The grammar tags `=>` as a plain operator; promote it to
+                // its own token so it can be themed like onedark's arrow.
+                if token == TokenKind::Operator && &source[start..end] == "=>" {
+                    token = TokenKind::Arrow;
+                }
+                collected.push((start, end, token));
             }
         }
     }
@@ -339,6 +351,26 @@ mod tests {
         assert_eq!(token_of(1, "JSON"), Some(TokenKind::Type));
         assert_eq!(token_of(1, "="), Some(TokenKind::Operator));
         assert_eq!(token_of(2, "StockLockTier"), Some(TokenKind::Type));
+    }
+
+    #[test]
+    fn brackets_and_fat_arrow_get_their_own_tokens() {
+        let source = "const f = (a: number) => [a];\n";
+        let hl = highlight(Path::new("x.ts"), source).expect("ts highlights");
+        let line = source.lines().next().unwrap();
+        let token_of = |needle: &str| {
+            let at = line.find(needle).unwrap();
+            hl.spans_for(1)
+                .iter()
+                .find(|s| s.start == at)
+                .map(|s| s.token)
+        };
+        assert_eq!(token_of("("), Some(TokenKind::Bracket));
+        assert_eq!(token_of("["), Some(TokenKind::Bracket));
+        // The fat arrow is promoted off the generic operator token…
+        assert_eq!(token_of("=>"), Some(TokenKind::Arrow));
+        // …while a plain `=` stays an operator.
+        assert_eq!(token_of("="), Some(TokenKind::Operator));
     }
 
     #[test]

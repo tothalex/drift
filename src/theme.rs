@@ -46,6 +46,8 @@ pub struct Theme {
     pub attribute: Color,
     pub variable: Color,
     pub operator: Color,
+    pub arrow: Color,
+    pub bracket: Color,
 }
 
 /// Default values, in config-file syntax — the single source for both the
@@ -76,6 +78,8 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     ("attribute", "#d55fde"),
     ("variable", "#ef596f"),
     ("operator", "#2bbac5"),
+    ("arrow", "#d55fde"),
+    ("bracket", "#d55fde"),
 ];
 
 impl Theme {
@@ -129,6 +133,8 @@ impl Theme {
             attribute: resolve("attribute")?,
             variable: resolve("variable")?,
             operator: resolve("operator")?,
+            arrow: resolve("arrow")?,
+            bracket: resolve("bracket")?,
         })
     }
 }
