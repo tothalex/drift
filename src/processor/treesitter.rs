@@ -118,6 +118,35 @@ const RUST_EXTRA_HIGHLIGHTS: &str = "
 (arguments [\"(\" \")\"] @punctuation.bracket.call)
 ";
 
+/// Supplement to the JS/TS queries: the bundled ones have no decorator
+/// rules, leaving `@` uncolored and the name looking like a call. nvim
+/// paints the whole `@Name` as `@attribute`; same-range precedence lets
+/// the attribute win over the call capture.
+const TS_JS_EXTRA_HIGHLIGHTS: &str = "
+(decorator \"@\" @attribute)
+(decorator (identifier) @attribute)
+(decorator (call_expression function: (identifier) @attribute))
+(decorator (call_expression function: (member_expression) @attribute))
+[(null) (undefined)] @keyword
+(namespace_export \"*\" @keyword)
+(namespace_export (identifier) @type)
+(ternary_expression [\"?\" \":\"] @keyword)
+";
+
+/// TypeScript-only constructs the bundled query misses (these node kinds
+/// don't exist in the plain-JS grammar, so they can't join
+/// [`TS_JS_EXTRA_HIGHLIGHTS`] without breaking its compilation).
+const TS_ONLY_EXTRA_HIGHLIGHTS: &str = "
+[\"is\" \"infer\" \"asserts\"] @keyword
+(type_parameters [\"<\" \">\"] @punctuation.bracket)
+(type_arguments [\"<\" \">\"] @punctuation.bracket)
+(method_signature name: (property_identifier) @function.method)
+(abstract_method_signature name: (property_identifier) @function.method)
+(conditional_type [\"?\" \":\"] @keyword)
+(union_type \"|\" @punctuation.delimiter)
+(intersection_type \"&\" @punctuation.delimiter)
+";
+
 const LANGUAGES: &[LangSpec] = &[
     LangSpec {
         name: "rust",
@@ -164,6 +193,7 @@ const LANGUAGES: &[LangSpec] = &[
         highlight_queries: &[
             tree_sitter_javascript::HIGHLIGHT_QUERY,
             tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
+            TS_JS_EXTRA_HIGHLIGHTS,
         ],
     },
     LangSpec {
@@ -174,6 +204,8 @@ const LANGUAGES: &[LangSpec] = &[
         highlight_queries: &[
             tree_sitter_javascript::HIGHLIGHT_QUERY,
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            TS_JS_EXTRA_HIGHLIGHTS,
+            TS_ONLY_EXTRA_HIGHLIGHTS,
         ],
     },
     LangSpec {
@@ -185,6 +217,8 @@ const LANGUAGES: &[LangSpec] = &[
             tree_sitter_javascript::HIGHLIGHT_QUERY,
             tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
             tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            TS_JS_EXTRA_HIGHLIGHTS,
+            TS_ONLY_EXTRA_HIGHLIGHTS,
         ],
     },
     LangSpec {

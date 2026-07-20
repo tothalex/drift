@@ -79,20 +79,29 @@ impl TokenKind {
         match self {
             // Call-argument parens are also captured as plain brackets by
             // the grammar's own query; the context-specific role wins.
-            TokenKind::CallBracket => 8,
+            TokenKind::CallBracket => 10,
             // A template substitution's `}` is captured as both a bracket
             // and interpolation punctuation; the foreground punctuation
             // must win so it doesn't render as a stray purple bracket.
-            TokenKind::Punctuation => 7,
-            // Names with a distinct role, most specific first.
-            TokenKind::Function => 5,
-            TokenKind::Type => 4,
+            TokenKind::Punctuation => 9,
+            // A decorator name is also a type and a call (`@Injectable`);
+            // the attribute role wins, like nvim's capture order.
+            TokenKind::Attribute => 8,
+            // Names with a distinct role, most specific first. Type sits
+            // above the generic bucket so `void` — a keyword token AND a
+            // predefined type — takes the type color, as editors show it.
+            TokenKind::Function => 7,
+            TokenKind::Type => 6,
+            // Below the generic bucket: a token that is an operator to
+            // the grammar but a bracket/keyword in context (generic
+            // `<` `>`, `export *`) takes the contextual color.
+            TokenKind::Operator => 4,
             TokenKind::Constant => 3,
             TokenKind::Property => 2,
             TokenKind::Variable => 1,
-            // Non-name tokens (keywords, strings, numbers, …) don't
-            // meaningfully collide with names; keep whichever came last.
-            _ => 6,
+            // Everything else (keywords, strings, numbers, operators…)
+            // rarely collides; keep whichever pattern came last.
+            _ => 5,
         }
     }
 }
@@ -194,6 +203,13 @@ pub(crate) fn highlight_tree(
                 // its own token so it can be themed like onedark's arrow.
                 if token == TokenKind::Operator && &source[start..end] == "=>" {
                     token = TokenKind::Arrow;
+                }
+                // A `constructor` method is a @function.method to the
+                // grammar, but editors give it the constructor (type)
+                // color — a text predicate drift can't express in the
+                // query itself.
+                if token == TokenKind::Function && &source[start..end] == "constructor" {
+                    token = TokenKind::Type;
                 }
                 collected.push((start, end, token));
             }
@@ -404,6 +420,33 @@ mod tests {
         assert_eq!(token_at("Date"), Some(TokenKind::Type));
         // The `.` inside the interpolation is punctuation, not string green.
         assert_eq!(token_at("."), Some(TokenKind::Punctuation));
+    }
+
+    #[test]
+    fn typescript_extra_query_matches_editor_colors() {
+        let source = "@Injectable()\nclass A { constructor() {} m(): void {} }\nlet x: string | null = a ? b : c;\n";
+        let hl = highlight(Path::new("x.ts"), source).expect("ts highlights");
+        let token_of = |lineno: u32, needle: &str| {
+            let line = source.lines().nth(lineno as usize - 1).unwrap();
+            let at = line.find(needle).unwrap();
+            hl.spans_for(lineno)
+                .iter()
+                .find(|s| s.start <= at && at < s.end)
+                .map(|s| s.token)
+        };
+        // The whole decorator is an attribute, including the `@`.
+        assert_eq!(token_of(1, "@"), Some(TokenKind::Attribute));
+        assert_eq!(token_of(1, "Injectable"), Some(TokenKind::Attribute));
+        // `constructor` takes the type color, not the method color.
+        assert_eq!(token_of(2, "constructor"), Some(TokenKind::Type));
+        // `void` is a predefined type even though the grammar also tags
+        // it as a keyword token.
+        assert_eq!(token_of(2, "void"), Some(TokenKind::Type));
+        // `null` is keyword-colored; union `|` is plain punctuation;
+        // ternary `?`/`:` are keyword-colored.
+        assert_eq!(token_of(3, "null"), Some(TokenKind::Keyword));
+        assert_eq!(token_of(3, "|"), Some(TokenKind::Punctuation));
+        assert_eq!(token_of(3, "?"), Some(TokenKind::Keyword));
     }
 
     #[test]

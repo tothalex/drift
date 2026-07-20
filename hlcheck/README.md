@@ -45,7 +45,9 @@ The checker makes the ceiling concrete rather than a guess:
   positional ones (`arrow` for `=>`, `bracket_call` for call-argument
   parens — purple in Rust). Rarer positional rules remain unmatched.
 - **Query richness** — nvim-treesitter ships richer queries than the
-  grammar-bundled ones drift compiles. Rust is patched to parity with a
-  supplemental query (variables, path segments, call parens — zero
-  tree-sitter diffs on the sample); TypeScript has a residue (`void` is
-  keyword-colored, nvim shows it as a type).
+  grammar-bundled ones drift compiles. Rust and TypeScript are patched
+  to parity with supplemental queries (variables, path segments, call
+  parens, decorators, `void`/`null`/`undefined`, generics, ternaries —
+  zero tree-sitter diffs on the samples). The one known residue is
+  nvim's ALL-CAPS-constant regex heuristic (`import { A }` renders
+  orange there), which needs predicate evaluation drift doesn't do.
