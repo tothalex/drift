@@ -4,7 +4,7 @@
 //! full default file to edit from.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -23,6 +23,10 @@ struct ConfigFile {
     /// either the base is auto-detected (origin/HEAD, main, master).
     #[serde(default)]
     base: Option<String>,
+    /// Base color theme: a built-in name or a file in `themes/` next to
+    /// the config. `[theme]` entries override on top of it.
+    #[serde(default)]
+    colorscheme: Option<String>,
     /// Editor command for the open-in-editor action.
     #[serde(default)]
     editor: Option<String>,
@@ -82,16 +86,28 @@ pub fn config_path() -> PathBuf {
 }
 
 pub fn load() -> Result<Config> {
-    let path = config_path();
-    let file: ConfigFile = match std::fs::read_to_string(&path) {
+    load_at(&config_path())
+}
+
+fn load_at(path: &Path) -> Result<Config> {
+    let file: ConfigFile = match std::fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text)
             .with_context(|| format!("invalid config at {}", path.display()))?,
         Err(_) => ConfigFile::default(),
     };
     let keymap = Keymap::from_overrides(&file.keys)
         .with_context(|| format!("invalid [keys] in {}", path.display()))?;
-    let (flat, langs) = split_theme(&file.theme)
+    // Colors layer: named colorscheme first, `[theme]` overrides on top.
+    let (mut flat, mut langs) = resolve_colorscheme(
+        file.colorscheme.as_deref().unwrap_or("onedark"),
+        path.parent(),
+    )?;
+    let (user_flat, user_langs) = split_theme(&file.theme)
         .with_context(|| format!("invalid [theme] in {}", path.display()))?;
+    flat.extend(user_flat);
+    for (lang, entries) in user_langs {
+        langs.entry(lang).or_default().extend(entries);
+    }
     let theme = Theme::from_all_overrides(&flat, &langs)
         .with_context(|| format!("invalid [theme] in {}", path.display()))?;
     Ok(Config {
@@ -100,6 +116,36 @@ pub fn load() -> Result<Config> {
         keymap,
         theme,
     })
+}
+
+/// Colorschemes drift ships with. `onedark` is the base palette itself,
+/// so it contributes no overrides.
+pub const BUILTIN_COLORSCHEMES: &[&str] = &["onedark"];
+
+/// Resolve a colorscheme name to theme overrides: a built-in, or a
+/// `themes/<name>.toml` file next to the config (same shape as the
+/// `[theme]` section: color entries plus per-language tables).
+fn resolve_colorscheme(
+    name: &str,
+    config_dir: Option<&Path>,
+) -> Result<(HashMap<String, String>, LangThemes)> {
+    if BUILTIN_COLORSCHEMES.contains(&name) {
+        return Ok((HashMap::new(), HashMap::new()));
+    }
+    let file = config_dir.map(|dir| dir.join("themes").join(format!("{name}.toml")));
+    let Some(file) = file.filter(|f| f.exists()) else {
+        bail!(
+            "unknown colorscheme '{name}' (built-in: {}; user themes live in {}themes/{name}.toml)",
+            BUILTIN_COLORSCHEMES.join(", "),
+            config_dir.map_or(String::new(), |d| format!("{}/", d.display())),
+        );
+    };
+    let raw: HashMap<String, toml::Value> = toml::from_str(
+        &std::fs::read_to_string(&file)
+            .with_context(|| format!("cannot read {}", file.display()))?,
+    )
+    .with_context(|| format!("invalid theme file {}", file.display()))?;
+    split_theme(&raw).with_context(|| format!("invalid theme file {}", file.display()))
 }
 
 /// The full default configuration in file syntax, generated from the same
@@ -117,6 +163,11 @@ pub fn default_toml() -> String {
          # or hex (\"#87d787\").\n\n\
          # Default base branch (--base overrides; auto-detected if unset).\n\
          # base = \"main\"\n\n\
+         # Base color theme. Built-in: onedark. A custom name loads\n\
+         # themes/<name>.toml from this directory — same keys as [theme]\n\
+         # below, with per-language sections like [typescript]; missing\n\
+         # keys keep the built-in defaults. [theme] overrides win on top.\n\
+         # colorscheme = \"onedark\"\n\n\
          # Editor for the open-in-editor key. {file} and {line} are\n\
          # substituted; the file path is appended when {file} is absent.\n\
          #   editor = \"code -g {file}:{line}\"\n\
@@ -176,6 +227,55 @@ mod tests {
         // The generated file carries the per-language defaults explicitly.
         assert!(langs.contains_key("go"));
         assert!(Theme::from_all_overrides(&flat, &langs).is_ok());
+    }
+
+    #[test]
+    fn colorscheme_file_layers_under_theme_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("themes")).unwrap();
+        std::fs::write(
+            dir.path().join("themes/mytheme.toml"),
+            "keyword = \"#111111\"\nstring = \"#222222\"\n\n[rust]\nbracket = \"#333333\"\n",
+        )
+        .unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "colorscheme = \"mytheme\"\n\n[theme]\nstring = \"#444444\"\n",
+        )
+        .unwrap();
+        let config = load_at(&config_path).unwrap();
+        // From the theme file…
+        assert_eq!(
+            config.theme.keyword,
+            ratatui::style::Color::Rgb(0x11, 0x11, 0x11)
+        );
+        // …user [theme] override wins over the theme file…
+        assert_eq!(
+            config.theme.string,
+            ratatui::style::Color::Rgb(0x44, 0x44, 0x44)
+        );
+        // …its language section applies…
+        let rust = config.theme.for_lang("rust").unwrap();
+        assert_eq!(
+            rust["bracket"],
+            ratatui::style::Color::Rgb(0x33, 0x33, 0x33)
+        );
+        // …and unset keys keep the built-in default.
+        assert_eq!(
+            config.theme.function,
+            ratatui::style::Color::Rgb(0x61, 0xaf, 0xef)
+        );
+    }
+
+    #[test]
+    fn unknown_colorscheme_errors_helpfully() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(&config_path, "colorscheme = \"nope\"\n").unwrap();
+        let err = load_at(&config_path).err().expect("must fail").to_string();
+        assert!(err.contains("unknown colorscheme 'nope'"), "{err}");
+        assert!(err.contains("onedark"), "{err}");
     }
 
     #[test]

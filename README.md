@@ -73,6 +73,23 @@ and a `[theme.<lang>]` section (rust, python, javascript, typescript,
 tsx, go) overrides any syntax color for that language only. A top-level
 `base = "…"` sets the default comparison branch.
 
+Colors layer in three steps: a base colorscheme, then `[theme]` /
+`[theme.<lang>]` overrides on top. The built-in colorscheme is
+`onedark`; a custom one is a file next to the config:
+
+```toml
+# ~/.config/drift/config.toml
+colorscheme = "mytheme"
+
+# ~/.config/drift/themes/mytheme.toml — same keys as [theme]; missing
+# keys keep the built-in defaults
+keyword = "#fb4934"
+string = "#b8bb26"
+
+[rust]
+bracket = "#fe8019"
+```
+
 The editor is a top-level `editor = "…"` command; `{file}` and `{line}`
 are substituted, and the file path is appended when `{file}` is absent:
 
