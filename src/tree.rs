@@ -15,6 +15,9 @@ pub struct FileTree {
 
 pub struct Node {
     pub label: String,
+    /// Full slash-joined path from the repo root — the node's stable
+    /// identity across rebuilds (labels repeat, compacted chains don't).
+    pub path: String,
     pub depth: usize,
     pub kind: NodeKind,
 }
@@ -58,14 +61,21 @@ impl FileTree {
             roots: Vec::new(),
             visible: Vec::new(),
         };
-        tree.roots = tree.convert(root, 0);
+        tree.roots = tree.convert(root, 0, "");
         tree.recompute_visible();
         tree
     }
 
     /// Convert a temp dir's children to nodes (dirs first, both sorted);
     /// returns their ids.
-    fn convert(&mut self, dir: TmpDir, depth: usize) -> Vec<usize> {
+    fn convert(&mut self, dir: TmpDir, depth: usize, prefix: &str) -> Vec<usize> {
+        let join = |label: &str| {
+            if prefix.is_empty() {
+                label.to_string()
+            } else {
+                format!("{prefix}/{label}")
+            }
+        };
         let mut ids = Vec::new();
         for (mut label, mut sub) in dir.dirs {
             // Compact chains of single-child directories: src/vcs/git.
@@ -74,16 +84,18 @@ impl FileTree {
                 label = format!("{label}/{next_label}");
                 sub = next;
             }
+            let path = join(&label);
             let id = self.nodes.len();
             self.nodes.push(Node {
                 label,
+                path: path.clone(),
                 depth,
                 kind: NodeKind::Dir {
                     children: Vec::new(),
                     expanded: true,
                 },
             });
-            let children = self.convert(sub, depth + 1);
+            let children = self.convert(sub, depth + 1, &path);
             let NodeKind::Dir { children: slot, .. } = &mut self.nodes[id].kind else {
                 unreachable!();
             };
@@ -93,9 +105,11 @@ impl FileTree {
         let mut files = dir.files;
         files.sort_by(|a, b| a.0.cmp(&b.0));
         for (label, index, status) in files {
+            let path = join(&label);
             let id = self.nodes.len();
             self.nodes.push(Node {
                 label,
+                path,
                 depth,
                 kind: NodeKind::File { index, status },
             });
@@ -160,6 +174,52 @@ impl FileTree {
             return true;
         }
         false
+    }
+
+    /// Full path of the node at visible row `i`.
+    pub fn row_path(&self, i: usize) -> Option<&str> {
+        self.row(i).map(|node| node.path.as_str())
+    }
+
+    /// Visible row of the node with this path, if it's currently shown.
+    pub fn row_of_path(&self, path: &str) -> Option<usize> {
+        (0..self.visible.len()).find(|&i| self.row(i).is_some_and(|n| n.path == path))
+    }
+
+    /// Paths of all collapsed directories, for carrying the expansion
+    /// state across a rebuild.
+    pub fn collapsed_paths(&self) -> Vec<String> {
+        self.nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.kind,
+                    NodeKind::Dir {
+                        expanded: false,
+                        ..
+                    }
+                )
+            })
+            .map(|node| node.path.clone())
+            .collect()
+    }
+
+    /// Collapse every directory whose path is in `paths` (the counterpart
+    /// of [`FileTree::collapsed_paths`] on the new tree).
+    pub fn collapse_paths(&mut self, paths: &[String]) {
+        let mut changed = false;
+        for node in &mut self.nodes {
+            if let NodeKind::Dir { expanded, .. } = &mut node.kind
+                && *expanded
+                && paths.contains(&node.path)
+            {
+                *expanded = false;
+                changed = true;
+            }
+        }
+        if changed {
+            self.recompute_visible();
+        }
     }
 
     /// Expand/collapse the directory at visible row `i`.
@@ -250,6 +310,37 @@ mod tests {
         let mut tree = FileTree::build(&[changed("a.rs")]);
         assert!(!tree.toggle(0));
         assert_eq!(tree.visible_len(), 1);
+    }
+
+    #[test]
+    fn row_paths_are_full_and_stable() {
+        let tree = FileTree::build(&[changed("src/vcs/git/mod.rs"), changed("src/main.rs")]);
+        // Rows: src, vcs/git (compacted), mod.rs, main.rs
+        assert_eq!(tree.row_path(0), Some("src"));
+        assert_eq!(tree.row_path(1), Some("src/vcs/git"));
+        assert_eq!(tree.row_path(2), Some("src/vcs/git/mod.rs"));
+        assert_eq!(tree.row_path(3), Some("src/main.rs"));
+        assert_eq!(tree.row_of_path("src/main.rs"), Some(3));
+    }
+
+    #[test]
+    fn collapsed_state_round_trips_across_rebuild() {
+        let mut tree = FileTree::build(&[changed("src/a.rs"), changed("docs/b.md")]);
+        // Collapse "src" (docs, b.md, src, a.rs — src is row 2).
+        assert_eq!(tree.row_path(2), Some("src"));
+        assert!(tree.toggle(2));
+        let collapsed = tree.collapsed_paths();
+        assert_eq!(collapsed, vec!["src".to_string()]);
+
+        let mut rebuilt = FileTree::build(&[
+            changed("src/a.rs"),
+            changed("src/c.rs"),
+            changed("docs/b.md"),
+        ]);
+        rebuilt.collapse_paths(&collapsed);
+        // src stays collapsed: docs, b.md, src.
+        assert_eq!(rebuilt.visible_len(), 3);
+        assert_eq!(rebuilt.row_of_path("src/a.rs"), None);
     }
 
     #[test]

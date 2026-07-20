@@ -49,6 +49,11 @@ pub trait Vcs {
 
     /// Branches usable as a comparison base, most recently active first.
     fn branches(&self) -> Result<Vec<String>, VcsError>;
+
+    /// Of these root-relative paths, the ones the VCS does not ignore.
+    /// Used by the file watcher to drop build-artifact noise; best-effort
+    /// (on error, paths pass through unfiltered).
+    fn unignored(&self, paths: Vec<PathBuf>) -> Vec<PathBuf>;
 }
 
 /// Ordered detection: the first provider that recognizes `path` wins.

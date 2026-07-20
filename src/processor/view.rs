@@ -94,6 +94,40 @@ impl FileView {
         })
     }
 
+    /// New-side line number at flat row `row`, or the nearest one above —
+    /// the anchor for keeping the cursor in place across a live refresh.
+    pub fn lineno_at(&self, row: usize) -> Option<u32> {
+        let mut best = None;
+        for (i, flat) in self.flat_lines().enumerate() {
+            if i > row {
+                break;
+            }
+            if let FlatLine::Line(ViewLine::Diff { line, .. }) = flat
+                && let Some(lineno) = line.new_lineno
+            {
+                best = Some(lineno);
+            }
+        }
+        best
+    }
+
+    /// Flat row showing new-side line `lineno`, or the nearest row after
+    /// it (falling back to the last numbered row when nothing follows).
+    pub fn row_of_lineno(&self, lineno: u32) -> Option<usize> {
+        let mut fallback = None;
+        for (i, flat) in self.flat_lines().enumerate() {
+            if let FlatLine::Line(ViewLine::Diff { line, .. }) = flat
+                && let Some(n) = line.new_lineno
+            {
+                if n >= lineno {
+                    return Some(i);
+                }
+                fallback = Some(i);
+            }
+        }
+        fallback
+    }
+
     /// Number of flattened rows (Binary/Unchanged render one message row).
     pub fn flat_len(&self) -> usize {
         match self {
@@ -160,6 +194,33 @@ mod tests {
             diffstat: (0, 0),
         };
         assert!(view.flat_lines().all(|fl| fl.content().is_none()));
+    }
+
+    #[test]
+    fn lineno_anchor_round_trips_across_views() {
+        let numbered = |n: u32| {
+            ViewLine::diff(DiffLine {
+                kind: LineKind::Context,
+                old_lineno: Some(n),
+                new_lineno: Some(n),
+                content: format!("line {n}"),
+            })
+        };
+        let view = FileView::Sections {
+            sections: vec![Section {
+                lines: vec![numbered(10), numbered(11), numbered(14)],
+            }],
+            scope_max: 0,
+            diffstat: (0, 0),
+        };
+        assert_eq!(view.lineno_at(1), Some(11));
+        assert_eq!(view.row_of_lineno(11), Some(1));
+        // Line 12 no longer shown: land on the nearest following row.
+        assert_eq!(view.row_of_lineno(12), Some(2));
+        // Past the end: fall back to the last numbered row.
+        assert_eq!(view.row_of_lineno(99), Some(2));
+        // Anchor above the first numbered row.
+        assert_eq!(view.row_of_lineno(1), Some(0));
     }
 
     #[test]

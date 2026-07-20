@@ -36,6 +36,7 @@ pub enum Action {
     ShrinkTree,
     PickBase,
     Refresh,
+    OpenEditor,
 }
 
 /// Config name and default keys per action — the single source for both
@@ -68,6 +69,7 @@ pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("shrink_tree", Action::ShrinkTree, &["<"]),
     ("pick_base", Action::PickBase, &["b"]),
     ("refresh", Action::Refresh, &["r"]),
+    ("open_editor", Action::OpenEditor, &["e"]),
 ];
 
 struct Binding {
@@ -202,6 +204,7 @@ const HELP: &[(&[Action], &str)] = &[
         &[Action::GrowTree, Action::ShrinkTree],
         "resize panes (or drag the gap)",
     ),
+    (&[Action::OpenEditor], "open the file in your editor"),
     (&[Action::PickBase], "choose the base branch"),
     (&[Action::Refresh], "refresh"),
     (&[Action::Quit], "quit"),

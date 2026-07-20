@@ -12,6 +12,10 @@ use serde::Deserialize;
 use crate::keymap::{KEY_DEFAULTS, Keymap};
 use crate::theme::{THEME_DEFAULTS, Theme};
 
+/// Default editor command: `{line}` and `{file}` are substituted; the
+/// file path is appended when `{file}` doesn't appear.
+pub const EDITOR_DEFAULT: &str = "nvim +{line}";
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigFile {
@@ -19,6 +23,9 @@ struct ConfigFile {
     /// either the base is auto-detected (origin/HEAD, main, master).
     #[serde(default)]
     base: Option<String>,
+    /// Editor command for the open-in-editor action.
+    #[serde(default)]
+    editor: Option<String>,
     #[serde(default)]
     keys: HashMap<String, Vec<String>>,
     #[serde(default)]
@@ -27,6 +34,7 @@ struct ConfigFile {
 
 pub struct Config {
     pub base: Option<String>,
+    pub editor: String,
     pub keymap: Keymap,
     pub theme: Theme,
 }
@@ -54,6 +62,7 @@ pub fn load() -> Result<Config> {
         .with_context(|| format!("invalid [theme] in {}", path.display()))?;
     Ok(Config {
         base: file.base,
+        editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
         keymap,
         theme,
     })
@@ -73,7 +82,12 @@ pub fn default_toml() -> String {
          # theme: ANSI names (\"darkgray\"), 256-color indexes (\"114\"),\n\
          # or hex (\"#87d787\").\n\n\
          # Default base branch (--base overrides; auto-detected if unset).\n\
-         # base = \"main\"\n\n[keys]\n",
+         # base = \"main\"\n\n\
+         # Editor for the open-in-editor key. {file} and {line} are\n\
+         # substituted; the file path is appended when {file} is absent.\n\
+         #   editor = \"code -g {file}:{line}\"\n\
+         #   editor = \"subl {file}:{line}\"\n\
+         editor = \"nvim +{line}\"\n\n[keys]\n",
     );
     for (name, _, keys) in KEY_DEFAULTS {
         let list = keys

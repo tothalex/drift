@@ -10,8 +10,12 @@ pub mod review;
 pub mod tree_nav;
 pub mod view_cache;
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
@@ -21,7 +25,7 @@ use ratatui::DefaultTerminal;
 use ratatui::layout::Position;
 
 use crate::config::Config;
-use crate::events::{AppEvent, spawn_input_thread};
+use crate::events::{AppEvent, INPUT_POLL_MS, spawn_input_thread, spawn_watcher_thread};
 use crate::keymap::{Action, Keymap};
 use crate::processor::view::{FileView, char_to_byte};
 use crate::theme::Theme;
@@ -73,6 +77,25 @@ pub struct App {
     /// Bumped whenever cached views become stale; prefetch results from
     /// older generations are discarded on arrival.
     generation: u64,
+    /// Live reload: paths the watcher flagged since the last applied
+    /// refresh (their views are stale)…
+    dirty_paths: HashSet<PathBuf>,
+    /// …whether git metadata moved (the comparison itself may be stale)…
+    meta_pending: bool,
+    /// …and the background status-scan bookkeeping: results carry the
+    /// sequence they were started with, stale ones are dropped.
+    scan_seq: u64,
+    scan_inflight: bool,
+    /// Events arrived while a scan was running: go again when it lands.
+    rescan_needed: bool,
+    /// Editor command template ({file}/{line} placeholders).
+    editor: String,
+    /// While set, the input thread stops reading the terminal — an
+    /// external editor owns it.
+    input_paused: Arc<AtomicBool>,
+    /// An editor launch requested by the last key, performed by the run
+    /// loop (it needs the terminal handle).
+    pending_editor: Option<(PathBuf, u32)>,
     quit: bool,
 }
 
@@ -101,6 +124,14 @@ impl App {
             events_tx,
             events_rx,
             generation: 0,
+            dirty_paths: HashSet::new(),
+            meta_pending: false,
+            scan_seq: 0,
+            scan_inflight: false,
+            rescan_needed: false,
+            editor: config.editor,
+            input_paused: Arc::new(AtomicBool::new(false)),
+            pending_editor: None,
             quit: false,
         };
         app.reload()?;
@@ -114,7 +145,9 @@ impl App {
     }
 
     pub fn current_view(&self) -> Option<&FileView> {
-        self.current.and_then(|i| self.cache.get(i))
+        self.current
+            .and_then(|i| self.files.get(i))
+            .and_then(|f| self.cache.get(&f.path))
     }
 
     pub fn help_open(&self) -> bool {
@@ -166,7 +199,8 @@ impl App {
     // --- event loop ---
 
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
-        spawn_input_thread(self.events_tx.clone());
+        spawn_input_thread(self.events_tx.clone(), Arc::clone(&self.input_paused));
+        spawn_watcher_thread(self.events_tx.clone(), self.vcs.root().to_path_buf());
         while !self.quit {
             terminal.draw(|frame| crate::ui::draw(frame, self))?;
             let result = match self.events_rx.recv()? {
@@ -180,19 +214,54 @@ impl App {
                     index,
                     view,
                 } => {
-                    if generation == self.generation {
-                        self.cache.insert_if_absent(index, view);
+                    // The generation guard also means `index` still refers
+                    // to the files list the prefetch was started with.
+                    if generation == self.generation
+                        && let Some(file) = self.files.get(index)
+                    {
+                        self.cache.insert_if_absent(file.path.clone(), view);
                     }
                     Ok(())
                 }
+                AppEvent::FsChanged { paths, meta } => self.on_fs_changed(paths, meta),
+                AppEvent::StatusReady { seq, result } => self.on_status_ready(seq, result),
             };
             // After startup, failures (e.g. git during a rebase) surface in
             // the status bar instead of exiting the app.
             if let Err(err) = result {
                 self.notice = Some(format!("error: {err:#}"));
             }
+            // Editor launches run here, not in the key handler: the
+            // terminal must be handed over and re-initialized around them.
+            if let Some((path, line)) = self.pending_editor.take() {
+                self.open_editor(terminal, &path, line);
+            }
         }
         Ok(())
+    }
+
+    /// Suspend the TUI, run the editor on the file, and restore. The
+    /// input thread is paused for the duration so the editor gets every
+    /// keystroke; any resulting file change comes back via live reload.
+    fn open_editor(&mut self, terminal: &mut DefaultTerminal, path: &Path, line: u32) {
+        let Some(mut command) = editor_command(&self.editor, path, line) else {
+            self.notice = Some(format!("invalid editor command '{}'", self.editor));
+            return;
+        };
+        self.input_paused.store(true, Ordering::Relaxed);
+        // The input thread notices the pause within one poll interval;
+        // wait that out so it can't race the editor for the terminal.
+        std::thread::sleep(Duration::from_millis(INPUT_POLL_MS + 20));
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
+        ratatui::restore();
+        let status = command.status();
+        *terminal = ratatui::init();
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
+        self.input_paused.store(false, Ordering::Relaxed);
+        if let Err(err) = status {
+            let program = command.get_program().to_string_lossy().into_owned();
+            self.notice = Some(format!("cannot run '{program}': {err}"));
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -308,8 +377,23 @@ impl App {
             Action::ShrinkTree => self.layout.resize(-2 * count),
             Action::PickBase => self.open_base_picker()?,
             Action::Refresh => self.reload()?,
+            Action::OpenEditor => self.request_editor(),
         }
         Ok(())
+    }
+
+    /// Queue the shown file for the editor, at the cursor's line.
+    fn request_editor(&mut self) {
+        let Some(file) = self.current_file() else {
+            self.notice = Some("no file to open".to_string());
+            return;
+        };
+        let path = self.vcs.root().join(&file.path);
+        let line = self
+            .current_view()
+            .and_then(|view| view.lineno_at(self.code.cursor))
+            .unwrap_or(1);
+        self.pending_editor = Some((path, line));
     }
 
     /// Picker keys are a fixed modal micro-map: j/k/arrows move, Enter
@@ -521,6 +605,12 @@ impl App {
     /// Full reload: comparison stays, files and views recompute. Review
     /// checks survive (they're keyed by path).
     fn reload(&mut self) -> Result<()> {
+        // A manual reload supersedes any in-flight live refresh.
+        self.scan_seq += 1;
+        self.scan_inflight = false;
+        self.rescan_needed = false;
+        self.meta_pending = false;
+        self.dirty_paths.clear();
         self.files = self.vcs.changed_files(&self.cmp)?;
         self.nav.rebuild(&self.files);
         self.current = None;
@@ -531,43 +621,163 @@ impl App {
         Ok(())
     }
 
-    /// Precompute every file's view on background threads so navigation
-    /// always hits a warm cache. Work is interleaved across a small pool
-    /// (worker k takes indices k, k+N, …) so the files near the top —
-    /// where the cursor starts — warm first. Each worker opens its own
-    /// repository handle; results stream in through the event channel and
-    /// are discarded if the generation moved on.
+    // --- live reload ---
+
+    /// A debounced watcher batch arrived: remember what went stale and
+    /// kick off (or queue) a background status scan.
+    fn on_fs_changed(&mut self, paths: Vec<PathBuf>, meta: bool) -> Result<()> {
+        self.dirty_paths.extend(paths);
+        self.meta_pending |= meta;
+        if self.scan_inflight {
+            self.rescan_needed = true;
+        } else {
+            self.start_status_scan();
+        }
+        Ok(())
+    }
+
+    /// Scan the working tree off the main thread; the result comes back
+    /// as [`AppEvent::StatusReady`]. When git metadata moved the
+    /// comparison is re-resolved too (commits, branch switches, rebases).
+    fn start_status_scan(&mut self) {
+        self.scan_inflight = true;
+        self.scan_seq += 1;
+        let seq = self.scan_seq;
+        let refresh_cmp = std::mem::take(&mut self.meta_pending);
+        let root = self.vcs.root().to_path_buf();
+        let cmp = self.cmp.clone();
+        let tx = self.events_tx.clone();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let vcs = crate::vcs::detect(&root).map_err(|e| e.to_string())?;
+                let cmp = if refresh_cmp {
+                    // Mid-operation states (rebase, unborn HEAD) can fail
+                    // to resolve; keep reviewing against the old ancestor.
+                    vcs.comparison(Some(&cmp.base_label)).unwrap_or(cmp)
+                } else {
+                    cmp
+                };
+                let files = vcs.changed_files(&cmp).map_err(|e| e.to_string())?;
+                Ok((cmp, files))
+            })();
+            let _ = tx.send(AppEvent::StatusReady { seq, result });
+        });
+    }
+
+    fn on_status_ready(
+        &mut self,
+        seq: u64,
+        result: Result<(Comparison, Vec<ChangedFile>), String>,
+    ) -> Result<()> {
+        if seq != self.scan_seq {
+            return Ok(()); // superseded by a reload or base switch
+        }
+        self.scan_inflight = false;
+        match result {
+            Ok((cmp, files)) => {
+                self.cmp = cmp;
+                self.apply_refresh(files)?;
+            }
+            Err(err) => self.notice = Some(format!("refresh failed: {err}")),
+        }
+        if std::mem::take(&mut self.rescan_needed) {
+            self.start_status_scan();
+        }
+        Ok(())
+    }
+
+    /// Apply a background scan without losing the user's place: the tree
+    /// keeps its cursor and collapsed dirs (matched by path), the shown
+    /// file stays shown, and its cursor re-anchors by line number.
+    fn apply_refresh(&mut self, files: Vec<ChangedFile>) -> Result<()> {
+        let current_path = self
+            .current
+            .and_then(|i| self.files.get(i))
+            .map(|f| f.path.clone());
+        // Anchor before anything moves: the new-side line under the cursor.
+        let anchor = self
+            .current_view()
+            .and_then(|view| view.lineno_at(self.code.cursor));
+        self.files = files;
+        self.nav
+            .rebuild_preserving(&self.files, self.layout.tree_area.height as usize);
+        let dirty: HashSet<PathBuf> = self.dirty_paths.drain().collect();
+        for path in &dirty {
+            self.cache.remove(path);
+        }
+        let live: HashSet<&std::path::Path> = self.files.iter().map(|f| f.path.as_path()).collect();
+        self.cache.retain(|path| live.contains(path));
+        self.current = current_path
+            .as_ref()
+            .and_then(|p| self.files.iter().position(|f| f.path == *p));
+        match (self.current, &current_path) {
+            // The shown file changed on disk: recompute it now (one file,
+            // milliseconds) and put the cursor back on the same line.
+            (Some(index), Some(path)) if dirty.contains(path) => {
+                self.ensure_view(index)?;
+                if let Some(view) = self.current_view() {
+                    let last = view.flat_len().saturating_sub(1);
+                    self.code.cursor = anchor
+                        .and_then(|lineno| view.row_of_lineno(lineno))
+                        .unwrap_or(self.code.cursor)
+                        .min(last);
+                    // Selections spanned content that no longer exists.
+                    self.code.select_anchor = None;
+                    self.code.mouse_sel = None;
+                }
+            }
+            (Some(_), _) => {} // untouched: the cached view is still valid
+            (None, _) => {
+                // The shown file left the changeset; fall back to the
+                // file under the tree cursor.
+                self.code.reset_for_new_view();
+                self.sync_current()?;
+            }
+        }
+        self.start_prefetch();
+        Ok(())
+    }
+
+    /// Precompute views on background threads so navigation always hits a
+    /// warm cache. Only files without a cached view are computed — under
+    /// live reload most views survive a refresh, so this stays cheap.
+    /// Work is interleaved across a small pool (worker k takes the k-th,
+    /// k+N-th, … missing file) so the files near the top — where the
+    /// cursor starts — warm first. Each worker opens its own repository
+    /// handle; results stream in through the event channel and are
+    /// discarded if the generation moved on.
     fn start_prefetch(&mut self) {
         self.generation += 1;
-        if self.files.is_empty() {
+        let missing: Vec<usize> = (0..self.files.len())
+            .filter(|&i| self.cache.get(&self.files[i].path).is_none())
+            .collect();
+        if missing.is_empty() {
             return;
         }
         let generation = self.generation;
         let workers = std::thread::available_parallelism()
             .map_or(1, |n| n.get() / 2)
             .clamp(1, 8)
-            .min(self.files.len());
+            .min(missing.len());
         let root = self.vcs.root().to_path_buf();
         let files = Arc::new(self.files.clone());
-        let options: Arc<Vec<_>> = Arc::new(
-            (0..files.len())
-                .map(|index| self.cache.options_for(index))
-                .collect(),
-        );
+        let missing = Arc::new(missing);
+        let options = self.cache.options();
         for worker in 0..workers {
             let root = root.clone();
             let cmp = self.cmp.clone();
             let files = Arc::clone(&files);
-            let options = Arc::clone(&options);
+            let missing = Arc::clone(&missing);
             let tx = self.events_tx.clone();
             std::thread::spawn(move || {
                 let Ok(vcs) = crate::vcs::detect(&root) else {
                     return;
                 };
-                let mut index = worker;
-                while index < files.len() {
+                let mut nth = worker;
+                while nth < missing.len() {
+                    let index = missing[nth];
                     if let Ok(view) =
-                        view_cache::compute(&files[index], vcs.as_ref(), &cmp, options[index])
+                        view_cache::compute(&files[index], vcs.as_ref(), &cmp, options)
                         && tx
                             .send(AppEvent::ViewReady {
                                 generation,
@@ -578,7 +788,7 @@ impl App {
                     {
                         return; // app is gone
                     }
-                    index += workers;
+                    nth += workers;
                 }
             });
         }
@@ -600,8 +810,7 @@ impl App {
 
     fn ensure_view(&mut self, index: usize) -> Result<()> {
         if let Some(file) = self.files.get(index) {
-            self.cache
-                .ensure(index, file, self.vcs.as_ref(), &self.cmp)?;
+            self.cache.ensure(file, self.vcs.as_ref(), &self.cmp)?;
         }
         Ok(())
     }
@@ -621,10 +830,10 @@ impl App {
     /// Widen/narrow the global block scope, clamped to what the current
     /// file's view reports as available.
     fn adjust_scope(&mut self, delta: isize) -> Result<()> {
-        let Some(index) = self.current else {
+        if self.current.is_none() {
             return Ok(());
-        };
-        let scope_max = match self.cache.get(index) {
+        }
+        let scope_max = match self.current_view() {
             Some(FileView::Sections { scope_max, .. }) => *scope_max,
             _ => 0,
         };
@@ -749,4 +958,70 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
     let mut clipboard = arboard::Clipboard::new()?;
     clipboard.set_text(text)?;
     Ok(())
+}
+
+/// Build the editor invocation from the config template: whitespace-split,
+/// `{file}`/`{line}` substituted per argument, and the file path appended
+/// when the template never mentions `{file}`.
+fn editor_command(template: &str, path: &Path, line: u32) -> Option<std::process::Command> {
+    let mut parts = template.split_whitespace();
+    let mut command = std::process::Command::new(parts.next()?);
+    let mut has_file = false;
+    for part in parts {
+        has_file |= part.contains("{file}");
+        command.arg(
+            part.replace("{file}", &path.display().to_string())
+                .replace("{line}", &line.to_string()),
+        );
+    }
+    if !has_file {
+        command.arg(path);
+    }
+    Some(command)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parts(command: &std::process::Command) -> (String, Vec<String>) {
+        (
+            command.get_program().to_string_lossy().into_owned(),
+            command
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn editor_command_substitutes_and_appends() {
+        let path = Path::new("/repo/src/main.rs");
+        // Default shape: no {file} → the path is appended.
+        let cmd = editor_command("nvim +{line}", path, 42).unwrap();
+        assert_eq!(
+            parts(&cmd),
+            (
+                "nvim".to_string(),
+                vec!["+42".to_string(), "/repo/src/main.rs".to_string()]
+            )
+        );
+        // Explicit {file}: substituted in place, nothing appended.
+        let cmd = editor_command("code -g {file}:{line}", path, 7).unwrap();
+        assert_eq!(
+            parts(&cmd),
+            (
+                "code".to_string(),
+                vec!["-g".to_string(), "/repo/src/main.rs:7".to_string()]
+            )
+        );
+        // A bare program name still gets the file.
+        let cmd = editor_command("vi", path, 1).unwrap();
+        assert_eq!(
+            parts(&cmd),
+            ("vi".to_string(), vec!["/repo/src/main.rs".to_string()])
+        );
+        // An empty template is rejected.
+        assert!(editor_command("  ", path, 1).is_none());
+    }
 }

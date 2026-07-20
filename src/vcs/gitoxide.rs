@@ -224,6 +224,26 @@ impl Vcs for GixVcs {
         Some(String::from_utf8_lossy(&blob).into_owned())
     }
 
+    fn unignored(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+        let Ok(index) = self.repo.index_or_empty() else {
+            return paths;
+        };
+        let Ok(mut stack) = self.repo.excludes(
+            &index,
+            None,
+            gix::worktree::stack::state::ignore::Source::WorktreeThenIdMappingIfNotSkipped,
+        ) else {
+            return paths;
+        };
+        paths
+            .into_iter()
+            .filter(|path| match stack.at_path(path, None) {
+                Ok(platform) => !platform.is_excluded(),
+                Err(_) => true,
+            })
+            .collect()
+    }
+
     fn branches(&self) -> Result<Vec<String>, VcsError> {
         let platform = self.repo.references().map_err(tool)?;
         let mut branches: Vec<(String, i64)> = Vec::new();

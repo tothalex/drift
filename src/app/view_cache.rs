@@ -1,7 +1,9 @@
-//! Computed views by file index, plus the display options that shape them
-//! (expansion, comment folding, per-file block scope).
+//! Computed views by file path, plus the display options that shape them
+//! (expansion, comment folding, per-file block scope). Path keys — not
+//! indices — so views survive the file list shifting under a live refresh.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -12,7 +14,7 @@ use crate::vcs::Vcs;
 use crate::vcs::model::{ChangedFile, Comparison, FileDiff, LineKind};
 
 pub struct ViewCache {
-    views: HashMap<usize, FileView>,
+    views: HashMap<PathBuf, FileView>,
     /// Block-scope level — global, like the other view toggles; each
     /// file clamps it to its own chain depth at compute time.
     pub scope: usize,
@@ -38,8 +40,18 @@ impl ViewCache {
         }
     }
 
-    pub fn get(&self, index: usize) -> Option<&FileView> {
-        self.views.get(&index)
+    pub fn get(&self, path: &Path) -> Option<&FileView> {
+        self.views.get(path)
+    }
+
+    /// Drop one file's view (its content changed).
+    pub fn remove(&mut self, path: &Path) {
+        self.views.remove(path);
+    }
+
+    /// Drop views for files that left the change list.
+    pub fn retain(&mut self, keep: impl Fn(&Path) -> bool) {
+        self.views.retain(|path, _| keep(path));
     }
 
     /// Drop every cached view (options changed).
@@ -47,34 +59,28 @@ impl ViewCache {
         self.views.clear();
     }
 
-    /// Full reset for a refresh: file indices changed, nothing is valid.
-    /// The global toggles (scope, expansion, folding) survive.
+    /// Full reset for a refresh: nothing is valid. The global toggles
+    /// (scope, expansion, folding) survive.
     pub fn reset(&mut self) {
         self.views.clear();
     }
 
     /// Compute and cache the view for a file if it isn't cached yet.
-    pub fn ensure(
-        &mut self,
-        index: usize,
-        file: &ChangedFile,
-        vcs: &dyn Vcs,
-        cmp: &Comparison,
-    ) -> Result<()> {
-        if self.views.contains_key(&index) {
+    pub fn ensure(&mut self, file: &ChangedFile, vcs: &dyn Vcs, cmp: &Comparison) -> Result<()> {
+        if self.views.contains_key(&file.path) {
             return Ok(());
         }
-        let view = compute(file, vcs, cmp, self.options_for(index))?;
-        self.views.insert(index, view);
+        let view = compute(file, vcs, cmp, self.options())?;
+        self.views.insert(file.path.clone(), view);
         Ok(())
     }
 
     /// Insert a background-computed view unless one arrived meanwhile.
-    pub fn insert_if_absent(&mut self, index: usize, view: FileView) {
-        self.views.entry(index).or_insert(view);
+    pub fn insert_if_absent(&mut self, path: PathBuf, view: FileView) {
+        self.views.entry(path).or_insert(view);
     }
 
-    pub fn options_for(&self, _index: usize) -> ViewOptions {
+    pub fn options(&self) -> ViewOptions {
         ViewOptions {
             expand_unchanged: self.expand_unchanged,
             scope: self.scope,

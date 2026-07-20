@@ -27,6 +27,25 @@ impl TreeNav {
         *self = TreeNav::new(files);
     }
 
+    /// Rebuild for a live refresh: collapsed directories and the cursor
+    /// carry over by path, so the user's place survives the file list
+    /// changing underneath them.
+    pub fn rebuild_preserving(&mut self, files: &[ChangedFile], viewport: usize) {
+        let cursor_path = self.tree.row_path(self.cursor).map(str::to_string);
+        let collapsed = self.tree.collapsed_paths();
+        let mut tree = FileTree::build(files);
+        tree.collapse_paths(&collapsed);
+        let last = tree.visible_len().saturating_sub(1);
+        // The cursor's node may be gone (file reverted); stay near the
+        // old row rather than jumping to the top.
+        self.cursor = cursor_path
+            .and_then(|path| tree.row_of_path(&path))
+            .unwrap_or_else(|| self.cursor.min(last));
+        self.tree = tree;
+        self.offset = self.offset.min(last);
+        self.keep_cursor_visible(viewport);
+    }
+
     pub fn offset(&self) -> usize {
         self.offset
     }
@@ -98,5 +117,43 @@ impl TreeNav {
         } else if self.cursor >= self.offset + viewport {
             self.offset = self.cursor + 1 - viewport;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vcs::model::FileStatus;
+    use std::path::PathBuf;
+
+    fn changed(path: &str) -> ChangedFile {
+        ChangedFile {
+            status: FileStatus::Modified,
+            path: PathBuf::from(path),
+            old_path: None,
+        }
+    }
+
+    #[test]
+    fn rebuild_preserving_keeps_cursor_by_path() {
+        let mut nav = TreeNav::new(&[changed("src/b.rs"), changed("z.rs")]);
+        // Rows: src, b.rs, z.rs — put the cursor on z.rs.
+        nav.set_cursor(2, 10);
+        // A new file shifts z.rs to a different row.
+        nav.rebuild_preserving(
+            &[changed("src/a.rs"), changed("src/b.rs"), changed("z.rs")],
+            10,
+        );
+        assert_eq!(nav.tree.row_path(nav.cursor), Some("z.rs"));
+    }
+
+    #[test]
+    fn rebuild_preserving_survives_vanished_cursor_file() {
+        let mut nav = TreeNav::new(&[changed("a.rs"), changed("b.rs")]);
+        nav.set_cursor(1, 10);
+        nav.rebuild_preserving(&[changed("a.rs")], 10);
+        // b.rs is gone: the cursor stays nearby instead of resetting.
+        assert_eq!(nav.cursor, 0);
+        assert_eq!(nav.tree.row_path(0), Some("a.rs"));
     }
 }

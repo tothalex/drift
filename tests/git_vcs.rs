@@ -242,3 +242,28 @@ fn unborn_branch_reports_missing_revision() {
         Err(VcsError::RevisionNotFound(rev)) if rev == "main"
     ));
 }
+
+#[test]
+fn unignored_filters_gitignored_paths() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    write(dir, ".gitignore", "target/\n*.log\n");
+    git(dir, &["add", ".gitignore"]);
+    git(dir, &["commit", "-qm", "ignore rules"]);
+    let vcs = detect(dir).unwrap();
+
+    let paths = vec![
+        "src/main.rs".into(),
+        "target/debug/build.d".into(),
+        "debug.log".into(),
+        "notes.txt".into(),
+    ];
+    let kept = vcs.unignored(paths);
+    assert_eq!(
+        kept,
+        vec![
+            std::path::PathBuf::from("src/main.rs"),
+            std::path::PathBuf::from("notes.txt"),
+        ]
+    );
+}

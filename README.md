@@ -43,6 +43,13 @@ drift ~/some/repo  # review another repository
   skips what's done. Incremental search with match highlighting.
 - Vim-style keys (counts, `g`/`G`, visual mode, yank) and full mouse
   support (wheel per pane, click, drag-to-copy, pane resize).
+- Live reload: the working tree is watched, so edits made outside the
+  app — your editor, an AI agent, a `git commit` — appear as they land,
+  without losing your cursor or scroll position. Gitignored paths
+  (build artifacts) never trigger a refresh.
+- Press `e` to open the file in your editor at the cursor's line
+  (neovim by default, configurable — see below); edits show up in the
+  diff the moment you save.
 - All views are precomputed on background threads — navigation stays
   instant regardless of changeset size.
 
@@ -63,6 +70,15 @@ Keys take single characters, named keys (`enter`, `space`, `tab`, arrows,
 an action replaces all of its default keys. Colors take ANSI names,
 256-color indexes, or hex values — including the full syntax palette. A
 top-level `base = "…"` sets the default comparison branch.
+
+The editor is a top-level `editor = "…"` command; `{file}` and `{line}`
+are substituted, and the file path is appended when `{file}` is absent:
+
+```toml
+editor = "nvim +{line}"           # the default
+# editor = "code -g {file}:{line}"
+# editor = "subl {file}:{line}"
+```
 
 ## Build
 
