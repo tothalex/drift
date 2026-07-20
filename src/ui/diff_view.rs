@@ -282,7 +282,7 @@ fn token_style(theme: &Theme, token: TokenKind) -> Style {
         TokenKind::Comment => Style::default()
             .fg(theme.comment)
             .add_modifier(Modifier::ITALIC),
-        TokenKind::Operator => Style::default(),
+        TokenKind::Operator => Style::default().fg(theme.operator),
     }
 }
 

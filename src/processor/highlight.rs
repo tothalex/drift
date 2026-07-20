@@ -34,7 +34,9 @@ const CAPTURES: &[(&str, TokenKind)] = &[
     ("attribute", TokenKind::Attribute),
     ("comment", TokenKind::Comment),
     ("constant", TokenKind::Constant),
-    ("constructor", TokenKind::Function),
+    // Class/constructor names take the type color (yellow in onedark),
+    // not the function color: `new Error(…)`, `StockLockTier`.
+    ("constructor", TokenKind::Type),
     ("function", TokenKind::Function),
     ("keyword", TokenKind::Keyword),
     ("label", TokenKind::Keyword),
@@ -49,6 +51,28 @@ const CAPTURES: &[(&str, TokenKind)] = &[
     // yellow `@variable.builtin`.
     ("variable.builtin", TokenKind::Type),
 ];
+
+impl TokenKind {
+    /// Precedence when two captures cover the exact same bytes. A name is
+    /// often captured several ways at once (`parse` is both
+    /// `@function.method` and `@property`; a function definition is both
+    /// `@function` and `@variable`); the most specific role should win,
+    /// the way an editor resolves it — call sites beat plain property or
+    /// variable reads.
+    fn rank(self) -> u8 {
+        match self {
+            // Names with a distinct role, most specific first.
+            TokenKind::Function => 5,
+            TokenKind::Type => 4,
+            TokenKind::Constant => 3,
+            TokenKind::Property => 2,
+            TokenKind::Variable => 1,
+            // Non-name tokens (keywords, strings, numbers, …) don't
+            // meaningfully collide with names; keep whichever came last.
+            _ => 6,
+        }
+    }
+}
 
 fn token_for_capture(name: &str) -> Option<TokenKind> {
     CAPTURES
@@ -156,7 +180,11 @@ pub(crate) fn highlight_tree(
         match flat.last_mut() {
             Some(last) if last.1 > start => {
                 if last.0 == start && last.1 == end {
-                    last.2 = token; // identical range: later pattern wins
+                    // Identical range: the higher-precedence role wins
+                    // (ties keep the later pattern, as editors do).
+                    if token.rank() >= last.2.rank() {
+                        last.2 = token;
+                    }
                     continue;
                 }
                 let tail = (end, last.1, last.2);
@@ -290,6 +318,27 @@ mod tests {
                 .iter()
                 .any(|s| s.token == TokenKind::Keyword)
         );
+    }
+
+    #[test]
+    fn method_calls_and_types_beat_property_and_variable() {
+        // `parse` is captured as both @function.method and @property, and
+        // a class name as @constructor + @type + @variable; precedence
+        // must land on the call/type role, matching editor coloring.
+        let source = "const t = JSON.parse(x);\nconst c = new StockLockTier();\n";
+        let hl = highlight(Path::new("x.ts"), source).expect("ts highlights");
+        let token_of = |lineno: u32, needle: &str| {
+            let line = source.lines().nth(lineno as usize - 1).unwrap();
+            let at = line.find(needle).unwrap();
+            hl.spans_for(lineno)
+                .iter()
+                .find(|s| s.start == at)
+                .map(|s| s.token)
+        };
+        assert_eq!(token_of(1, "parse"), Some(TokenKind::Function));
+        assert_eq!(token_of(1, "JSON"), Some(TokenKind::Type));
+        assert_eq!(token_of(1, "="), Some(TokenKind::Operator));
+        assert_eq!(token_of(2, "StockLockTier"), Some(TokenKind::Type));
     }
 
     #[test]

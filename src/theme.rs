@@ -45,6 +45,7 @@ pub struct Theme {
     pub property: Color,
     pub attribute: Color,
     pub variable: Color,
+    pub operator: Color,
 }
 
 /// Default values, in config-file syntax — the single source for both the
@@ -74,6 +75,7 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     ("property", "#ef596f"),
     ("attribute", "#d55fde"),
     ("variable", "#ef596f"),
+    ("operator", "#2bbac5"),
 ];
 
 impl Theme {
@@ -126,6 +128,7 @@ impl Theme {
             property: resolve("property")?,
             attribute: resolve("attribute")?,
             variable: resolve("variable")?,
+            operator: resolve("operator")?,
         })
     }
 }
