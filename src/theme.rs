@@ -49,6 +49,8 @@ pub struct Theme {
     pub arrow: Color,
     pub bracket: Color,
     pub punctuation: Color,
+    /// Per-language syntax overrides: language name → key → color.
+    lang: HashMap<String, HashMap<String, Color>>,
 }
 
 /// Default values, in config-file syntax — the single source for both the
@@ -80,13 +82,54 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     ("variable", "#ef596f"),
     ("operator", "#2bbac5"),
     ("arrow", "#d55fde"),
-    ("bracket", "#d55fde"),
+    // onedark's per-filetype files paint brackets orange in TS/JS, Rust,
+    // and Python; only languages without an override (Go) keep the
+    // global purple — see THEME_LANG_DEFAULTS.
+    ("bracket", "#d19a66"),
     ("punctuation", "#abb2bf"),
 ];
 
+/// The syntax-palette subset of the theme — the keys a `[theme.<lang>]`
+/// section may override per language.
+pub const SYNTAX_KEYS: &[&str] = &[
+    "keyword",
+    "function",
+    "type",
+    "string",
+    "number",
+    "property",
+    "attribute",
+    "variable",
+    "operator",
+    "arrow",
+    "bracket",
+    "punctuation",
+    "comment",
+];
+
+/// Per-language default overrides, in config-file syntax. onedark colors
+/// some tokens differently per language: brackets are orange in TS/JS,
+/// Rust, and Python (the base default) but purple in Go.
+pub const THEME_LANG_DEFAULTS: &[(&str, &str, &str)] = &[("go", "bracket", "#d55fde")];
+
 impl Theme {
+    /// Syntax colors for one language: defaults overlaid with the user's
+    /// `[theme.<lang>]` entries; `None` when nothing is overridden.
+    pub fn for_lang(&self, lang: &str) -> Option<&HashMap<String, Color>> {
+        self.lang.get(lang)
+    }
+
     /// Defaults overlaid with the user's `[theme]` entries.
     pub fn from_overrides(overrides: &HashMap<String, String>) -> Result<Theme> {
+        Theme::from_all_overrides(overrides, &HashMap::new())
+    }
+
+    /// Defaults overlaid with `[theme]` entries plus `[theme.<lang>]`
+    /// per-language sections.
+    pub fn from_all_overrides(
+        overrides: &HashMap<String, String>,
+        lang_overrides: &HashMap<String, HashMap<String, String>>,
+    ) -> Result<Theme> {
         for name in overrides.keys() {
             if !THEME_DEFAULTS.iter().any(|(known, _)| known == name) {
                 bail!(
@@ -110,6 +153,38 @@ impl Theme {
                 .ok()
                 .with_context(|| format!("theme entry '{name}': invalid color '{value}'"))
         };
+        // Per-language sections: defaults first, then the user's entries
+        // (which may add languages or replace individual keys).
+        let mut lang: HashMap<String, HashMap<String, Color>> = HashMap::new();
+        for (language, key, value) in THEME_LANG_DEFAULTS {
+            let color = Color::from_str(value).expect("lang default parses");
+            lang.entry(language.to_string())
+                .or_default()
+                .insert(key.to_string(), color);
+        }
+        let known_langs: Vec<&str> = crate::processor::treesitter::lang_names().collect();
+        for (language, entries) in lang_overrides {
+            if !known_langs.contains(&language.as_str()) {
+                bail!(
+                    "unknown language section 'theme.{language}' (known: {})",
+                    known_langs.join(", ")
+                );
+            }
+            for (key, value) in entries {
+                if !SYNTAX_KEYS.contains(&key.as_str()) {
+                    bail!(
+                        "theme.{language}: '{key}' is not a syntax key (known: {})",
+                        SYNTAX_KEYS.join(", ")
+                    );
+                }
+                let color = Color::from_str(value)
+                    .ok()
+                    .with_context(|| format!("theme.{language}.{key}: invalid color '{value}'"))?;
+                lang.entry(language.clone())
+                    .or_default()
+                    .insert(key.clone(), color);
+            }
+        }
         Ok(Theme {
             added: resolve("added")?,
             removed: resolve("removed")?,
@@ -138,6 +213,7 @@ impl Theme {
             arrow: resolve("arrow")?,
             bracket: resolve("bracket")?,
             punctuation: resolve("punctuation")?,
+            lang,
         })
     }
 }

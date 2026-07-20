@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -13,6 +15,11 @@ use crate::vcs::model::{DiffLine, LineKind};
 
 pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
     let theme = &app.theme;
+    // Per-language syntax overrides for the shown file, resolved once.
+    let lang = app
+        .current_file()
+        .and_then(|f| crate::processor::treesitter::lang_name(&f.path))
+        .and_then(|name| theme.for_lang(name));
     let title = app
         .current_file()
         .map(|f| f.path.display().to_string())
@@ -106,7 +113,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
                         if sel.is_none() && *comment {
                             render_comment_line(theme, line)
                         } else {
-                            render_diff_line(theme, line, spans, emph, sel)
+                            render_diff_line(theme, lang, line, spans, emph, sel)
                         }
                     }
                 };
@@ -179,6 +186,7 @@ fn render_comment_line(theme: &Theme, line: &DiffLine) -> Line<'static> {
 
 fn render_diff_line(
     theme: &Theme,
+    lang: Option<&HashMap<String, Color>>,
     line: &DiffLine,
     spans: &[HighlightSpan],
     emph: &[(usize, usize)],
@@ -198,6 +206,7 @@ fn render_diff_line(
     ];
     parts.extend(render_content(
         theme,
+        lang,
         &line.content,
         spans,
         emph,
@@ -221,6 +230,7 @@ fn gutter_parts(theme: &Theme, line: &DiffLine) -> (&'static str, Option<Color>,
 /// and the emphasis ranges (background on the exact changed bytes).
 fn render_content(
     theme: &Theme,
+    lang: Option<&HashMap<String, Color>>,
     content: &str,
     spans: &[HighlightSpan],
     emph: &[(usize, usize)],
@@ -253,7 +263,7 @@ fn render_content(
         };
         let mut style = Style::default();
         if let Some(span) = spans.iter().find(|s| s.start <= start && end <= s.end) {
-            style = style.patch(token_style(theme, span.token));
+            style = style.patch(token_style(theme, lang, span.token));
         }
         if emph.iter().any(|&(s, e)| s <= start && end <= e) {
             style = style.bg(emph_bg);
@@ -269,23 +279,28 @@ fn render_content(
 
 /// One Dark syntax palette (onedarkpro's `onedark_dark` hex values), soft
 /// enough that the green/red change accents stay the loudest signal.
-fn token_style(theme: &Theme, token: TokenKind) -> Style {
+/// `lang` carries the shown file's `[theme.<lang>]` overrides.
+fn token_style(theme: &Theme, lang: Option<&HashMap<String, Color>>, token: TokenKind) -> Style {
+    let (key, base) = match token {
+        TokenKind::Keyword => ("keyword", theme.keyword),
+        TokenKind::Function => ("function", theme.function),
+        TokenKind::Type => ("type", theme.type_),
+        TokenKind::String => ("string", theme.string),
+        TokenKind::Number | TokenKind::Constant => ("number", theme.number),
+        TokenKind::Property => ("property", theme.property),
+        TokenKind::Variable => ("variable", theme.variable),
+        TokenKind::Attribute => ("attribute", theme.attribute),
+        TokenKind::Comment => ("comment", theme.comment),
+        TokenKind::Operator => ("operator", theme.operator),
+        TokenKind::Arrow => ("arrow", theme.arrow),
+        TokenKind::Bracket => ("bracket", theme.bracket),
+        TokenKind::Punctuation => ("punctuation", theme.punctuation),
+    };
+    let color = lang.and_then(|m| m.get(key)).copied().unwrap_or(base);
+    let style = Style::default().fg(color);
     match token {
-        TokenKind::Keyword => Style::default().fg(theme.keyword),
-        TokenKind::Function => Style::default().fg(theme.function),
-        TokenKind::Type => Style::default().fg(theme.type_),
-        TokenKind::String => Style::default().fg(theme.string),
-        TokenKind::Number | TokenKind::Constant => Style::default().fg(theme.number),
-        TokenKind::Property => Style::default().fg(theme.property),
-        TokenKind::Variable => Style::default().fg(theme.variable),
-        TokenKind::Attribute => Style::default().fg(theme.attribute),
-        TokenKind::Comment => Style::default()
-            .fg(theme.comment)
-            .add_modifier(Modifier::ITALIC),
-        TokenKind::Operator => Style::default().fg(theme.operator),
-        TokenKind::Arrow => Style::default().fg(theme.arrow),
-        TokenKind::Bracket => Style::default().fg(theme.bracket),
-        TokenKind::Punctuation => Style::default().fg(theme.punctuation),
+        TokenKind::Comment => style.add_modifier(Modifier::ITALIC),
+        _ => style,
     }
 }
 

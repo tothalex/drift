@@ -9,6 +9,8 @@ use tree_sitter::{Language, Node, Parser, Tree};
 use super::blocks::{Block, BlockResolver};
 
 pub(crate) struct LangSpec {
+    /// Stable identifier for per-language theming (`[theme.rust]`).
+    pub(crate) name: &'static str,
     extensions: &'static [&'static str],
     language: fn() -> Language,
     /// Node kinds that count as reviewable blocks, innermost-first walk.
@@ -32,6 +34,16 @@ impl LangSpec {
 pub(super) fn spec_for(path: &Path) -> Option<&'static LangSpec> {
     let ext = path.extension()?.to_str()?;
     LANGUAGES.iter().find(|spec| spec.extensions.contains(&ext))
+}
+
+/// Language identifier for a path, for per-language theming.
+pub fn lang_name(path: &Path) -> Option<&'static str> {
+    spec_for(path).map(|spec| spec.name)
+}
+
+/// All language identifiers the registry knows (config validation).
+pub(crate) fn lang_names() -> impl Iterator<Item = &'static str> {
+    LANGUAGES.iter().map(|spec| spec.name)
 }
 
 fn lang_rust() -> Language {
@@ -95,6 +107,7 @@ const TS_BLOCK_KINDS: &[&str] = &[
 
 const LANGUAGES: &[LangSpec] = &[
     LangSpec {
+        name: "rust",
         extensions: &["rs"],
         language: lang_rust,
         block_kinds: &[
@@ -114,6 +127,7 @@ const LANGUAGES: &[LangSpec] = &[
         highlight_queries: &[tree_sitter_rust::HIGHLIGHTS_QUERY],
     },
     LangSpec {
+        name: "python",
         extensions: &["py"],
         language: lang_python,
         block_kinds: &[
@@ -130,6 +144,7 @@ const LANGUAGES: &[LangSpec] = &[
         highlight_queries: &[tree_sitter_python::HIGHLIGHTS_QUERY],
     },
     LangSpec {
+        name: "javascript",
         extensions: &["js", "mjs", "cjs", "jsx"],
         language: lang_javascript,
         block_kinds: JS_BLOCK_KINDS,
@@ -139,6 +154,7 @@ const LANGUAGES: &[LangSpec] = &[
         ],
     },
     LangSpec {
+        name: "typescript",
         extensions: &["ts", "mts", "cts"],
         language: lang_typescript,
         block_kinds: TS_BLOCK_KINDS,
@@ -148,6 +164,7 @@ const LANGUAGES: &[LangSpec] = &[
         ],
     },
     LangSpec {
+        name: "tsx",
         extensions: &["tsx"],
         language: lang_tsx,
         block_kinds: TS_BLOCK_KINDS,
@@ -158,6 +175,7 @@ const LANGUAGES: &[LangSpec] = &[
         ],
     },
     LangSpec {
+        name: "go",
         extensions: &["go"],
         language: lang_go,
         block_kinds: &[

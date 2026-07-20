@@ -68,8 +68,10 @@ drift --init-config
 Keys take single characters, named keys (`enter`, `space`, `tab`, arrows,
 `pageup`/`pagedown`, `home`/`end`), optionally prefixed `ctrl-`; listing
 an action replaces all of its default keys. Colors take ANSI names,
-256-color indexes, or hex values — including the full syntax palette. A
-top-level `base = "…"` sets the default comparison branch.
+256-color indexes, or hex values — including the full syntax palette,
+and a `[theme.<lang>]` section (rust, python, javascript, typescript,
+tsx, go) overrides any syntax color for that language only. A top-level
+`base = "…"` sets the default comparison branch.
 
 The editor is a top-level `editor = "…"` command; `{file}` and `{line}`
 are substituted, and the file path is appended when `{file}` is absent:

@@ -10,7 +10,7 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::keymap::{KEY_DEFAULTS, Keymap};
-use crate::theme::{THEME_DEFAULTS, Theme};
+use crate::theme::{THEME_DEFAULTS, THEME_LANG_DEFAULTS, Theme};
 
 /// Default editor command: `{line}` and `{file}` are substituted; the
 /// file path is appended when `{file}` doesn't appear.
@@ -28,8 +28,40 @@ struct ConfigFile {
     editor: Option<String>,
     #[serde(default)]
     keys: HashMap<String, Vec<String>>,
+    /// Flat color entries plus `[theme.<lang>]` per-language sub-tables,
+    /// split apart in [`load`].
     #[serde(default)]
-    theme: HashMap<String, String>,
+    theme: HashMap<String, toml::Value>,
+}
+
+/// Per-language theme sections: language name → key → color string.
+type LangThemes = HashMap<String, HashMap<String, String>>;
+
+/// Split the raw `[theme]` map into flat color entries and per-language
+/// sections; anything else (numbers, arrays…) is a descriptive error.
+fn split_theme(
+    raw: &HashMap<String, toml::Value>,
+) -> Result<(HashMap<String, String>, LangThemes)> {
+    let mut flat = HashMap::new();
+    let mut langs: LangThemes = HashMap::new();
+    for (name, value) in raw {
+        match value {
+            toml::Value::String(color) => {
+                flat.insert(name.clone(), color.clone());
+            }
+            toml::Value::Table(entries) => {
+                let section = langs.entry(name.clone()).or_default();
+                for (key, color) in entries {
+                    let toml::Value::String(color) = color else {
+                        bail!("theme.{name}.{key}: expected a color string");
+                    };
+                    section.insert(key.clone(), color.clone());
+                }
+            }
+            _ => bail!("theme.{name}: expected a color string or [theme.{name}] table"),
+        }
+    }
+    Ok((flat, langs))
 }
 
 pub struct Config {
@@ -58,7 +90,9 @@ pub fn load() -> Result<Config> {
     };
     let keymap = Keymap::from_overrides(&file.keys)
         .with_context(|| format!("invalid [keys] in {}", path.display()))?;
-    let theme = Theme::from_overrides(&file.theme)
+    let (flat, langs) = split_theme(&file.theme)
+        .with_context(|| format!("invalid [theme] in {}", path.display()))?;
+    let theme = Theme::from_all_overrides(&flat, &langs)
         .with_context(|| format!("invalid [theme] in {}", path.display()))?;
     Ok(Config {
         base: file.base,
@@ -101,6 +135,19 @@ pub fn default_toml() -> String {
     for (name, value) in THEME_DEFAULTS {
         out.push_str(&format!("{name} = \"{value}\"\n"));
     }
+    out.push_str(
+        "\n# Per-language overrides of the syntax palette: any [theme.<lang>]\n\
+         # section (rust, python, javascript, typescript, tsx, go) may reset\n\
+         # any syntax key for that language only.\n",
+    );
+    let mut last_lang = "";
+    for (lang, key, value) in THEME_LANG_DEFAULTS {
+        if *lang != last_lang {
+            out.push_str(&format!("[theme.{lang}]\n"));
+            last_lang = lang;
+        }
+        out.push_str(&format!("{key} = \"{value}\"\n"));
+    }
     out
 }
 
@@ -125,6 +172,22 @@ mod tests {
     fn default_toml_round_trips() {
         let file: ConfigFile = toml::from_str(&default_toml()).unwrap();
         assert!(Keymap::from_overrides(&file.keys).is_ok());
-        assert!(Theme::from_overrides(&file.theme).is_ok());
+        let (flat, langs) = split_theme(&file.theme).unwrap();
+        // The generated file carries the per-language defaults explicitly.
+        assert!(langs.contains_key("go"));
+        assert!(Theme::from_all_overrides(&flat, &langs).is_ok());
+    }
+
+    #[test]
+    fn theme_rejects_unknown_language_and_non_syntax_keys() {
+        let bad_lang: HashMap<String, toml::Value> =
+            toml::from_str("cobol = { bracket = \"#ffffff\" }").unwrap();
+        let (flat, langs) = split_theme(&bad_lang).unwrap();
+        assert!(Theme::from_all_overrides(&flat, &langs).is_err());
+
+        let bad_key: HashMap<String, toml::Value> =
+            toml::from_str("rust = { cursor_bg = \"#ffffff\" }").unwrap();
+        let (flat, langs) = split_theme(&bad_key).unwrap();
+        assert!(Theme::from_all_overrides(&flat, &langs).is_err());
     }
 }
