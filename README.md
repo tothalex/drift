@@ -11,6 +11,11 @@ working tree, so committed work, uncommitted edits, and untracked files
 all show up together. The base branch is auto-detected (`origin/HEAD`,
 then `main`, then `master`), and can be switched from inside the app.
 
+The same UI also opens real pull requests: browse the repo's open
+GitHub PRs or GitLab MRs, read the discussion, reply to review threads,
+comment on lines, resolve, delete — without leaving the terminal. See
+[Pull requests](#pull-requests).
+
 ## Install
 
 **macOS / Linux**
@@ -55,6 +60,9 @@ drift --pr 123     # open pull request #123 right away
 
 ## Features
 
+The primary view is your own working changes — everything since the
+base branch, kept live as you edit:
+
 - Changes are shown inside their enclosing code block (function, class,
   if, …) resolved with tree-sitter, not as bare hunks; the scope can be
   widened and narrowed. Rust, Python, JavaScript, TypeScript/TSX, and Go;
@@ -86,31 +94,36 @@ Press `?` inside the app for all keybindings.
 
 ## Pull requests
 
-Press `p` to list the repository's open pull requests (GitHub) or merge
-requests (GitLab), and open one to review it in the same UI: the file
-tree, block-scoped diffs, review progress, search — everything works the
-same. On top of that:
+drift doubles as a PR review tool. Press `p` (or run `drift --pr 123`)
+to list the repository's open pull requests (GitHub) or merge requests
+(GitLab) and open one — the same file tree, block-scoped diffs, review
+progress, and search as the primary view, with the whole review
+conversation in place:
 
-- Inline review threads appear under the exact diff lines they were
-  written on; `t` folds a thread down to its head line. Threads that no
-  longer match the current diff stay reachable instead of disappearing.
-- A virtual `# conversation` entry at the top of the tree holds the PR
-  description, the PR-level discussion, and those outdated threads.
-- `a` comments on whatever is under the cursor: a diff line starts a new
-  inline thread, and each thread ends in an `[a] reply` row that answers
-  it from right there. `A` writes a
-  PR-level comment from anywhere. Comments are written in a small
-  in-app box — `enter` posts, `shift+enter` (or `alt+enter` in
-  terminals without the kitty keyboard protocol) adds a line, `esc`
-  cancels. The box's footer shows the keys that work in your terminal.
-- On comment rows, `d` (pressed twice) deletes your comment and `r`
-  toggles the thread resolved/unresolved — there they shadow their
-  global meanings (jump / refresh), as the `[d]`/`[r]` hints under each
-  thread indicate. GitHub resolution goes through one `gh api graphql`
-  call, which also lets drift show each thread's resolved state.
-- `r` refetches the open pull request; `p` (or clicking the `#N` status
-  segment) returns to the list, where the first row leads back to your
-  local changes.
+![reviewing a pull request with an inline thread](assets/pr-review.png)
+
+- Inline review threads sit under the exact diff lines they were written
+  on, with their resolved/unresolved state; `t` folds a thread down to
+  its head line. Threads that no longer match the current diff stay
+  reachable instead of disappearing.
+- A virtual `# conversation` entry pinned at the top of the tree holds
+  the PR description, the PR-level discussion, and those outdated
+  threads.
+- Comment anywhere: `a` on a diff line starts a new inline thread, `a`
+  on a thread's `[a] reply` row answers that thread, and `A` writes a
+  PR-level comment from wherever you are.
+- Comments are composed in a small in-app box — `enter` posts,
+  `shift+enter` (or `alt+enter` in terminals without the kitty keyboard
+  protocol) adds a line, `esc` cancels; the box's footer shows the keys
+  that work in your terminal. While a comment posts, a spinner marks
+  the exact row it will land on.
+- On comment rows `r` toggles the thread resolved/unresolved and `d`
+  (pressed twice, with the author named in the confirmation) deletes
+  your comment — the `[r]`/`[d]` hints under each thread advertise
+  them; elsewhere both keys keep their global meanings.
+- `r` refetches the open pull request without losing your place; `p`
+  (or clicking the `#N` status segment) returns to the list, where the
+  first row leads back to your local changes.
 - When the PR's commits exist locally (after any `git fetch`), diffs get
   full syntax highlighting and block scoping; otherwise drift falls back
   to the plain hunk view — no fetch is ever run for you.
