@@ -73,8 +73,13 @@ drift ~/some/repo  # review another repository
 - Press `e` to open the file in your editor at the cursor's line
   (neovim by default, configurable — see below); edits show up in the
   diff the moment you save.
+- Review scopes: press `b` (or click the branch name in the status bar)
+  to switch the base branch, then narrow the review to one commit or to
+  untracked files only — or keep everything at once.
 - All views are precomputed on background threads — navigation stays
   instant regardless of changeset size.
+
+![choosing a review scope](assets/scopes.gif)
 
 Press `?` inside the app for all keybindings.
 
