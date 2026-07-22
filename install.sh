@@ -21,6 +21,8 @@ main() {
     case "$OS" in
         Linux)  os="linux" ;;
         Darwin) os="macos" ;;
+        MINGW*|MSYS*|CYGWIN*)
+            err "on Windows, download drift-windows-x86_64.zip from https://github.com/$REPO/releases/latest" ;;
         *)      err "unsupported OS: $OS" ;;
     esac
 

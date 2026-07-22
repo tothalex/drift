@@ -79,7 +79,8 @@ pub fn config_path() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME").map_or_else(PathBuf::new, PathBuf::from);
+            // HOME is absent on Windows; home_dir falls back to USERPROFILE.
+            let home = std::env::home_dir().unwrap_or_default();
             home.join(".config")
         });
     base.join("drift").join("config.toml")
@@ -170,7 +171,7 @@ pub fn default_toml() -> String {
          # colorscheme = \"onedark\"\n\n\
          # Editor for the open-in-editor key. {file} and {line} are\n\
          # substituted; the file path is appended when {file} is absent.\n\
-         #   editor = \"code -g {file}:{line}\"\n\
+         #   editor = \"code -g {file}:{line}\"   (Windows: \"code.cmd\")\n\
          #   editor = \"subl {file}:{line}\"\n\
          editor = \"nvim +{line}\"\n\n[keys]\n",
     );

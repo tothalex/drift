@@ -25,8 +25,15 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
             name: drift-macos-aarch64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: drift-windows-x86_64
 
     runs-on: ${{ matrix.os }}
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
@@ -66,19 +73,28 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo zigbuild --release --locked --target ${{ matrix.target }}
 
-      - name: Build (macOS)
-        if: runner.os == 'macOS'
+      - name: Build (macOS / Windows)
+        if: runner.os != 'Linux'
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
         run: |
           tar -czf ${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release drift
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          7z a ${{ matrix.name }}.zip ./target/${{ matrix.target }}/release/drift.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.name }}.tar.gz
+          path: |
+            ${{ matrix.name }}.tar.gz
+            ${{ matrix.name }}.zip
+          if-no-files-found: error
 
   release:
     needs: build
@@ -93,7 +109,7 @@ jobs:
           merge-multiple: true
 
       - name: Checksums
-        run: shasum -a 256 drift-*.tar.gz > checksums.txt
+        run: shasum -a 256 drift-*.tar.gz drift-*.zip > checksums.txt
 
       - name: Create release
         env:
@@ -103,4 +119,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            drift-*.tar.gz checksums.txt
+            drift-*.tar.gz drift-*.zip checksums.txt

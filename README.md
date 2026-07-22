@@ -13,13 +13,36 @@ then `main`, then `master`), and can be switched from inside the app.
 
 ## Install
 
+**macOS / Linux**
+
 ```sh
 curl -fsSL https://tothalex.github.io/drift/install.sh | sh
 ```
 
-Prebuilt binaries for macOS and Linux (x86_64/aarch64) land in
-`~/.local/bin` (override with `DRIFT_INSTALL_DIR`). Or build from source:
-see [Build](#build).
+Prebuilt binaries (x86_64/aarch64) land in `~/.local/bin` (override with
+`DRIFT_INSTALL_DIR`).
+
+**Windows (experimental)**
+
+Grab `drift-windows-x86_64.zip` from the
+[latest release](https://github.com/tothalex/drift/releases/latest) and
+unzip it. Then, from PowerShell in the folder containing `drift.exe`, move
+it somewhere permanent and add that folder to your user `PATH`:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\drift" | Out-Null
+Move-Item drift.exe "$env:LOCALAPPDATA\Programs\drift\"
+[Environment]::SetEnvironmentVariable("Path",
+  [Environment]::GetEnvironmentVariable("Path", "User") + ";$env:LOCALAPPDATA\Programs\drift", "User")
+```
+
+Open a new terminal and `drift` is available. (Alternatively: Start menu →
+"Edit environment variables for your account" → edit `Path` → add the
+folder there.) Windows Terminal is recommended. Windows support is new —
+if something misbehaves, please
+[open an issue](https://github.com/tothalex/drift/issues).
+
+Or build from source on any platform: see [Build](#build).
 
 ## Usage
 
