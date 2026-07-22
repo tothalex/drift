@@ -47,9 +47,10 @@ Or build from source on any platform: see [Build](#build).
 ## Usage
 
 ```sh
-drift              # review the current repo
+drift              # review the current repository
 drift --base dev   # compare against a different base
 drift ~/some/repo  # review another repository
+drift --help       # all options
 ```
 
 ## Features
