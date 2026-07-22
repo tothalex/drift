@@ -19,6 +19,9 @@ fn main() -> Result<()> {
     // Base priority: --base flag, then config, then auto-detection.
     let base = cli.base.clone().or_else(|| config.base.clone());
     let mut app = App::new(vcs, base.as_deref(), config)?;
+    if let Some(number) = cli.pr {
+        app.open_pr_at_start(number);
+    }
 
     let mut terminal = ratatui::init();
     let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);

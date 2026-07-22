@@ -599,6 +599,7 @@ dependencies = [
  "notify-debouncer-full",
  "ratatui",
  "serde",
+ "serde_json",
  "similar",
  "streaming-iterator",
  "tempfile",

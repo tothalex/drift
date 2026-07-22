@@ -1,6 +1,8 @@
 //! Sidebar file-tree state: builds a VS Code-style tree from the flat
 //! changed-file list — directories first, single-child directory chains
 //! compacted (`src/vcs/git`), directories collapsible (expanded by default).
+//! Virtual entries — `#`-prefixed root paths like the PR conversation —
+//! pin above everything: they're about the whole changeset, not a file.
 
 use std::collections::BTreeMap;
 
@@ -61,7 +63,23 @@ impl FileTree {
             roots: Vec::new(),
             visible: Vec::new(),
         };
-        tree.roots = tree.convert(root, 0, "");
+        // Virtual entries first, above every directory and file.
+        let (virtuals, plain): (Vec<_>, Vec<_>) = std::mem::take(&mut root.files)
+            .into_iter()
+            .partition(|(name, ..)| name.starts_with('#'));
+        root.files = plain;
+        for (label, index, status) in virtuals {
+            let id = tree.nodes.len();
+            tree.nodes.push(Node {
+                path: label.clone(),
+                label,
+                depth: 0,
+                kind: NodeKind::File { index, status },
+            });
+            tree.roots.push(id);
+        }
+        let rest = tree.convert(root, 0, "");
+        tree.roots.extend(rest);
         tree.recompute_visible();
         tree
     }
@@ -274,6 +292,27 @@ mod tests {
                 (0, "zzz.txt".into()),
             ]
         );
+    }
+
+    #[test]
+    fn virtual_entries_pin_above_directories_and_files() {
+        let tree = FileTree::build(&[
+            changed("zzz.txt"),
+            changed("src/main.rs"),
+            changed("#conversation"),
+        ]);
+        assert_eq!(
+            labels(&tree),
+            vec![
+                (0, "#conversation".into()),
+                (0, "src".into()),
+                (1, "main.rs".into()),
+                (0, "zzz.txt".into()),
+            ]
+        );
+        // It maps back to its changed-files index like any file row.
+        assert_eq!(tree.file_at(0), Some(2));
+        assert_eq!(tree.first_file_row(), Some(0));
     }
 
     #[test]

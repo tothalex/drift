@@ -45,6 +45,29 @@ pub enum ViewLine {
     /// A folded run of unchanged comment-only lines, summarized by the
     /// first line's prose.
     CommentFold { count: u32, summary: String },
+    /// First row of a review-comment thread (or one conversation entry)
+    /// in the pull-request view: who wrote it and when. `key` targets the
+    /// forge-side thread for replies; empty for rows nothing replies to.
+    /// `id` is the single comment this row belongs to (for deletion).
+    CommentHead {
+        key: String,
+        id: String,
+        author: String,
+        date: String,
+        /// Replies hidden behind a collapsed head (0 when expanded).
+        replies: usize,
+        resolved: Option<bool>,
+        collapsed: bool,
+    },
+    /// One pre-wrapped prose row of a review-comment body.
+    CommentBody {
+        key: String,
+        id: String,
+        text: String,
+    },
+    /// A muted key hint under a thread ("a reply · t fold"). Carries the
+    /// thread key so acting on the hint row targets the thread above it.
+    CommentHint { key: String, text: String },
 }
 
 impl ViewLine {

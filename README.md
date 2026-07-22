@@ -50,6 +50,7 @@ Or build from source on any platform: see [Build](#build).
 drift              # review the current repo
 drift --base dev   # compare against a different base
 drift ~/some/repo  # review another repository
+drift --pr 123     # open pull request #123 right away
 ```
 
 ## Features
@@ -82,6 +83,55 @@ drift ~/some/repo  # review another repository
 ![choosing a review scope](assets/scopes.gif)
 
 Press `?` inside the app for all keybindings.
+
+## Pull requests
+
+Press `p` to list the repository's open pull requests (GitHub) or merge
+requests (GitLab), and open one to review it in the same UI: the file
+tree, block-scoped diffs, review progress, search — everything works the
+same. On top of that:
+
+- Inline review threads appear under the exact diff lines they were
+  written on; `t` folds a thread down to its head line. Threads that no
+  longer match the current diff stay reachable instead of disappearing.
+- A virtual `# conversation` entry at the top of the tree holds the PR
+  description, the PR-level discussion, and those outdated threads.
+- `a` comments on whatever is under the cursor: a diff line starts a new
+  inline thread, and each thread ends in an `[a] reply` row that answers
+  it from right there. `A` writes a
+  PR-level comment from anywhere. Comments are written in a small
+  in-app box — `enter` posts, `shift+enter` (or `alt+enter` in
+  terminals without the kitty keyboard protocol) adds a line, `esc`
+  cancels. The box's footer shows the keys that work in your terminal.
+- On comment rows, `d` (pressed twice) deletes your comment and `r`
+  toggles the thread resolved/unresolved — there they shadow their
+  global meanings (jump / refresh), as the `[d]`/`[r]` hints under each
+  thread indicate. GitHub resolution goes through one `gh api graphql`
+  call, which also lets drift show each thread's resolved state.
+- `r` refetches the open pull request; `p` (or clicking the `#N` status
+  segment) returns to the list, where the first row leads back to your
+  local changes.
+- When the PR's commits exist locally (after any `git fetch`), diffs get
+  full syntax highlighting and block scoping; otherwise drift falls back
+  to the plain hunk view — no fetch is ever run for you.
+
+drift talks to the forge through the official CLIs — [`gh`] for GitHub,
+[`glab`] for GitLab — so install the one for your forge and run its
+`auth login` once. That's also what makes GitHub Enterprise and
+self-managed GitLab work: authenticate the CLI against your host
+(`gh auth login --hostname git.corp.example`) and drift picks the forge
+from the repo's `origin` remote. If your hostname names neither
+"github" nor "gitlab", set it explicitly in the config:
+
+```toml
+[forge]
+kind = "gitlab"          # or "github"
+# gh = "/path/to/gh"     # binary overrides, if not on PATH
+# glab = "/path/to/glab"
+```
+
+[`gh`]: https://cli.github.com
+[`glab`]: https://gitlab.com/gitlab-org/cli
 
 ## Configuration
 

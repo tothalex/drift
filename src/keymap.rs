@@ -27,6 +27,7 @@ pub enum Action {
     PrevMatch,
     ToggleCollapse,
     ToggleCommentFold,
+    ToggleThread,
     CheckFile,
     UncheckLast,
     Visual,
@@ -35,6 +36,9 @@ pub enum Action {
     GrowTree,
     ShrinkTree,
     PickBase,
+    PickPr,
+    Comment,
+    CommentGeneral,
     Refresh,
     OpenEditor,
 }
@@ -60,6 +64,7 @@ pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("prev_match", Action::PrevMatch, &["N"]),
     ("toggle_collapse", Action::ToggleCollapse, &["z"]),
     ("toggle_comment_fold", Action::ToggleCommentFold, &["C"]),
+    ("toggle_thread", Action::ToggleThread, &["t"]),
     ("copy_path", Action::CopyPath, &["c"]),
     ("check_file", Action::CheckFile, &["x"]),
     ("uncheck_last", Action::UncheckLast, &["X"]),
@@ -68,6 +73,9 @@ pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("grow_tree", Action::GrowTree, &[">"]),
     ("shrink_tree", Action::ShrinkTree, &["<"]),
     ("pick_base", Action::PickBase, &["b"]),
+    ("pick_pr", Action::PickPr, &["p", "P"]),
+    ("comment", Action::Comment, &["a"]),
+    ("comment_general", Action::CommentGeneral, &["A"]),
     ("refresh", Action::Refresh, &["r"]),
     ("open_editor", Action::OpenEditor, &["e"]),
 ];
@@ -201,11 +209,21 @@ const HELP: &[(&[Action], &str)] = &[
     ),
     (&[Action::ToggleCommentFold], "fold / unfold comment blocks"),
     (
+        &[Action::ToggleThread],
+        "fold / unfold the review thread (PR)",
+    ),
+    (
         &[Action::GrowTree, Action::ShrinkTree],
         "resize panes (or drag the gap)",
     ),
     (&[Action::OpenEditor], "open the file in your editor"),
     (&[Action::PickBase], "choose base branch, then review scope"),
+    (&[Action::PickPr], "open a pull request from the forge"),
+    (
+        &[Action::Comment],
+        "comment on the line / reply to the thread (PR)",
+    ),
+    (&[Action::CommentGeneral], "general PR comment"),
     (&[Action::Refresh], "refresh"),
     (&[Action::Quit], "quit"),
 ];

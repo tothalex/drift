@@ -337,6 +337,11 @@ impl Vcs for GixVcs {
         Some(String::from_utf8_lossy(&blob).into_owned())
     }
 
+    fn file_at_revision(&self, rev: &RevisionId, path: &Path) -> Option<String> {
+        let blob = self.blob_at(rev, path)?;
+        Some(String::from_utf8_lossy(&blob).into_owned())
+    }
+
     fn unignored(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
         let Ok(index) = self.repo.index_or_empty() else {
             return paths;

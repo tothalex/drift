@@ -29,6 +29,8 @@ pub struct Theme {
     pub comment: Color,
     /// TODO / FIXME / … review tags inside comments.
     pub tag: Color,
+    /// Review-thread accents in the PR view: quote bars and authors.
+    pub thread: Color,
     /// Matched characters during tree search.
     pub search: Color,
     /// The `?` overlay background.
@@ -68,6 +70,7 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     ("muted", "darkgray"),
     ("comment", "#7f848e"),
     ("tag", "179"),
+    ("thread", "110"),
     ("search", "179"),
     ("panel_bg", "235"),
     ("visual_badge_fg", "black"),
@@ -205,6 +208,7 @@ impl Theme {
             muted: resolve("muted")?,
             comment: resolve("comment")?,
             tag: resolve("tag")?,
+            thread: resolve("thread")?,
             search: resolve("search")?,
             panel_bg: resolve("panel_bg")?,
             visual_badge_fg: resolve("visual_badge_fg")?,

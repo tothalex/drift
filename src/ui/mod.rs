@@ -1,3 +1,4 @@
+mod compose;
 mod diff_view;
 mod file_list;
 mod help;
@@ -40,6 +41,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         help::draw(frame, app);
     }
     picker::draw(frame, app);
+    compose::draw(frame, app);
 }
 
 /// Header row + content area of a pane, with a one-column left margin.

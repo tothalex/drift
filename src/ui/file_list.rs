@@ -33,6 +33,15 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
             let indent = "  ".repeat(node.depth);
             let label = |base: Style| label_spans(node.label.clone(), base, app);
             let mut line = match &node.kind {
+                // The PR session's virtual conversation entry.
+                NodeKind::File { index, .. } if app.is_pr_conversation(*index) => {
+                    let accent = Style::default().fg(theme.thread);
+                    let spans = vec![
+                        Span::styled(format!("{indent}# "), accent),
+                        Span::styled(app.pr_conversation_label(), Style::default()),
+                    ];
+                    Line::from(spans)
+                }
                 NodeKind::Dir { expanded, .. } => {
                     let mut spans = vec![Span::styled(
                         format!("{indent}{} ", if *expanded { '▾' } else { '▸' }),

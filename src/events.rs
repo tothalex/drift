@@ -12,6 +12,7 @@ use std::time::Duration;
 use notify::RecursiveMode;
 use notify_debouncer_full::{DebounceEventResult, new_debouncer};
 
+use crate::forge::model::{Comment, CommentThread, PrData, PullRequest};
 use crate::processor::view::FileView;
 use crate::vcs::model::{ChangedFile, Comparison};
 
@@ -35,11 +36,61 @@ pub enum AppEvent {
         seq: u64,
         result: Result<(Comparison, Vec<ChangedFile>), String>,
     },
+    /// The forge listed open pull requests; stale sequences are discarded.
+    PrListReady {
+        seq: u64,
+        result: Result<Vec<PullRequest>, String>,
+    },
+    /// One whole pull request (detail, diffs, comments) arrived; stale
+    /// sequences are discarded.
+    PrReady {
+        seq: u64,
+        result: Result<Box<PrData>, String>,
+    },
+    /// A comment was posted; on success the refetched threads and
+    /// conversation ride along so the view updates in place.
+    PrPosted {
+        seq: u64,
+        result: Result<RefreshedComments, String>,
+    },
+    /// Spinner heartbeat while a forge request is in flight — the only
+    /// time-driven redraws; the ticker thread stops when the wait ends.
+    Tick,
 }
+
+/// The refetched comment side of a pull request after posting.
+pub type RefreshedComments = Box<(Vec<CommentThread>, Vec<Comment>)>;
 
 /// How long the input thread can stay inside one poll — the ceiling on
 /// how stale a just-set pause flag can go unnoticed.
 pub const INPUT_POLL_MS: u64 = 100;
+
+/// Ask the terminal to disambiguate modified keys (the kitty keyboard
+/// protocol), so shift+enter is distinguishable from enter in the
+/// comment composer. Returns whether the terminal supports it — callers
+/// only pop what was pushed. Must run while raw mode is active.
+pub fn push_keyboard_enhancement() -> bool {
+    if !matches!(
+        crossterm::terminal::supports_keyboard_enhancement(),
+        Ok(true)
+    ) {
+        return false;
+    }
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        )
+    )
+    .is_ok()
+}
+
+pub fn pop_keyboard_enhancement() {
+    let _ = crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::PopKeyboardEnhancementFlags
+    );
+}
 
 /// Read terminal input, pausing while `paused` is set — an external
 /// editor owns the terminal then, and reading here would steal its

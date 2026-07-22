@@ -7,7 +7,7 @@ pub mod unidiff;
 
 use std::path::{Path, PathBuf};
 
-use model::{ChangedFile, CommitInfo, Comparison, FileDiff};
+use model::{ChangedFile, CommitInfo, Comparison, FileDiff, RevisionId};
 
 #[derive(Debug, thiserror::Error)]
 pub enum VcsError {
@@ -46,6 +46,14 @@ pub trait Vcs {
     /// ancestor). Best-effort: `None` when it didn't exist there or can't
     /// be read — callers degrade gracefully.
     fn file_at_ancestor(&self, cmp: &Comparison, file: &ChangedFile) -> Option<String>;
+
+    /// The file's content at an arbitrary revision, if the object exists
+    /// locally. Best-effort — the pull-request view uses it to recover
+    /// full sources for commits the repo happens to have fetched, and
+    /// degrades to the plain hunk view when it returns `None`.
+    fn file_at_revision(&self, _rev: &RevisionId, _path: &Path) -> Option<String> {
+        None
+    }
 
     /// Branches usable as a comparison base, most recently active first.
     fn branches(&self) -> Result<Vec<String>, VcsError>;

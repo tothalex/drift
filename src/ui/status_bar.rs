@@ -36,6 +36,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(theme.search),
         ));
     }
+    // The forge spinner animates in front of the working notice while a
+    // request is in flight ("⠹ posting comment…").
+    if let Some(frame) = app.spinner_frame() {
+        spans.push(Span::styled(
+            format!("  {frame}"),
+            Style::default().fg(theme.thread),
+        ));
+    }
     if let Some(notice) = app.notice() {
         spans.push(Span::raw(format!("  {notice}")));
     }

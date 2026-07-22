@@ -121,7 +121,7 @@ pub fn compute(
     ))
 }
 
-fn has_removed_lines(diff: &FileDiff) -> bool {
+pub(crate) fn has_removed_lines(diff: &FileDiff) -> bool {
     match diff {
         FileDiff::Binary => false,
         FileDiff::Text { hunks } => hunks

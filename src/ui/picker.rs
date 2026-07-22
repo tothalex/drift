@@ -34,6 +34,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 .collect(),
             picker.cursor,
         ),
+        Picker::Pr(picker) => (
+            picker.title.as_str(),
+            picker
+                .rows
+                .iter()
+                .map(|(label, current)| (label.as_str(), *current))
+                .collect(),
+            picker.cursor,
+        ),
     };
 
     let area = frame.area();

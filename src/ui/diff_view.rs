@@ -45,6 +45,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
     let dim = Style::default().fg(theme.muted);
     let mouse_sel = app.code.mouse_selection();
     let selection = app.code.selection();
+    // The in-flight forge mutation's target row gets the spinner, right
+    // where the user acted.
+    let action = app.action_spot().map(|(spot, frame)| (spot.clone(), frame));
+    let current_path = app.current_file().map(|f| f.path.clone());
 
     // Scroll math first, so only the visible window of lines is ever
     // built — per-keystroke render cost is O(viewport), not O(file).
@@ -86,7 +90,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
             .skip(scroll)
             .take(height)
             .map(|(index, flat)| {
-                let line = match flat {
+                let marked = action
+                    .as_ref()
+                    .is_some_and(|(spot, _)| spot_marks(spot, &flat, current_path.as_deref()));
+                let mut line = match flat {
                     FlatLine::Separator => Line::default(),
                     FlatLine::Line(ViewLine::Collapsed { count }) => Line::styled(
                         format!("       ⋯ {count} unchanged lines"),
@@ -100,6 +107,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
                             .fg(theme.comment)
                             .add_modifier(Modifier::ITALIC),
                     ),
+                    FlatLine::Line(ViewLine::CommentHead {
+                        author,
+                        date,
+                        replies,
+                        resolved,
+                        collapsed,
+                        ..
+                    }) => render_comment_head(theme, author, date, *replies, *resolved, *collapsed),
+                    FlatLine::Line(ViewLine::CommentBody { text, .. }) => Line::from(vec![
+                        Span::styled("      ┃ ", Style::default().fg(theme.thread)),
+                        Span::styled(
+                            text.clone(),
+                            Style::default().add_modifier(Modifier::ITALIC),
+                        ),
+                    ]),
+                    FlatLine::Line(ViewLine::CommentHint { text, .. }) => Line::from(vec![
+                        Span::styled("      ┃ ", Style::default().fg(theme.thread)),
+                        Span::styled(
+                            format!("↳ {text}"),
+                            Style::default()
+                                .fg(theme.muted)
+                                .add_modifier(Modifier::ITALIC),
+                        ),
+                    ]),
                     FlatLine::Line(ViewLine::Diff {
                         line,
                         spans,
@@ -117,12 +148,46 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
                         }
                     }
                 };
+                if marked && let Some((_, frame)) = &action {
+                    line.push_span(Span::styled(
+                        format!("  {frame}"),
+                        Style::default().fg(theme.thread),
+                    ));
+                }
                 style_row(index, line)
             })
             .collect(),
     };
 
     frame.render_widget(Paragraph::new(lines), content);
+}
+
+/// Does the in-flight mutation's spot land on this row? Diff lines also
+/// need the shown file to match — line numbers repeat across files.
+fn spot_marks(
+    spot: &crate::app::ActionSpot,
+    flat: &FlatLine,
+    path: Option<&std::path::Path>,
+) -> bool {
+    use crate::app::ActionSpot;
+    match (spot, flat) {
+        (
+            ActionSpot::DiffLine { path: p, old, new },
+            FlatLine::Line(ViewLine::Diff { line, .. }),
+        ) => Some(p.as_path()) == path && line.old_lineno == *old && line.new_lineno == *new,
+        (
+            ActionSpot::ThreadHint { key },
+            FlatLine::Line(ViewLine::CommentHint { key: row_key, .. }),
+        ) => row_key == key,
+        (
+            ActionSpot::CommentHead { id },
+            FlatLine::Line(ViewLine::CommentHead { id: row_id, .. }),
+        ) => !id.is_empty() && row_id == id,
+        (ActionSpot::ConversationHint, FlatLine::Line(ViewLine::CommentHint { key, .. })) => {
+            key.is_empty()
+        }
+        _ => false,
+    }
 }
 
 /// Byte range of `content` covered by the mouse selection on view line
@@ -147,6 +212,45 @@ fn mouse_sel_range(
         content.len()
     };
     (start < end).then_some((start, end))
+}
+
+/// The head row of a review thread or conversation entry: author, date,
+/// hidden-reply count when collapsed, and resolution state.
+fn render_comment_head(
+    theme: &Theme,
+    author: &str,
+    date: &str,
+    replies: usize,
+    resolved: Option<bool>,
+    collapsed: bool,
+) -> Line<'static> {
+    let accent = Style::default().fg(theme.thread);
+    let dim = Style::default().fg(theme.muted);
+    let mut parts = vec![
+        Span::styled("      ┃ ".to_string(), accent),
+        Span::styled("● ".to_string(), accent),
+        Span::styled(author.to_string(), accent.add_modifier(Modifier::BOLD)),
+    ];
+    if !date.is_empty() {
+        parts.push(Span::styled(format!(" · {date}"), dim));
+    }
+    if collapsed {
+        let replies = match replies {
+            0 => String::new(),
+            1 => " · 1 reply".to_string(),
+            n => format!(" · {n} replies"),
+        };
+        parts.push(Span::styled(format!("{replies} ⋯"), dim));
+    }
+    match resolved {
+        Some(true) => parts.push(Span::styled(
+            " · resolved".to_string(),
+            Style::default().fg(theme.added),
+        )),
+        Some(false) => parts.push(Span::styled(" · unresolved".to_string(), dim)),
+        None => {}
+    }
+    Line::from(parts)
 }
 
 /// A comment-only line as prose: gutter (with the diff accent when the

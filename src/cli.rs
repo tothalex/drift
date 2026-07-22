@@ -15,6 +15,11 @@ pub struct Cli {
     #[arg(short, long)]
     pub base: Option<String>,
 
+    /// Open this pull request / merge request number right away
+    /// (requires the gh or glab CLI, authenticated).
+    #[arg(long, value_name = "NUMBER")]
+    pub pr: Option<u64>,
+
     /// Write the default config to ~/.config/drift/config.toml and exit.
     #[arg(long)]
     pub init_config: bool,

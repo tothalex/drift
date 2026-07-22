@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::forge::ForgeConfig;
 use crate::keymap::{KEY_DEFAULTS, Keymap};
 use crate::theme::{THEME_DEFAULTS, THEME_LANG_DEFAULTS, Theme};
 
@@ -30,12 +31,45 @@ struct ConfigFile {
     /// Editor command for the open-in-editor action.
     #[serde(default)]
     editor: Option<String>,
+    /// Pull-request integration; see [`ForgeSection`].
+    #[serde(default)]
+    forge: ForgeSection,
     #[serde(default)]
     keys: HashMap<String, Vec<String>>,
     /// Flat color entries plus `[theme.<lang>]` per-language sub-tables,
     /// split apart in [`load`].
     #[serde(default)]
     theme: HashMap<String, toml::Value>,
+}
+
+/// The `[forge]` section: pull-request integration via the gh/glab CLIs.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForgeSection {
+    /// "github" | "gitlab" — overrides host detection for self-hosted
+    /// instances whose hostname names neither.
+    #[serde(default)]
+    kind: Option<String>,
+    /// Binary path overrides.
+    #[serde(default)]
+    gh: Option<String>,
+    #[serde(default)]
+    glab: Option<String>,
+}
+
+impl ForgeSection {
+    fn into_config(self) -> Result<ForgeConfig> {
+        if let Some(kind) = self.kind.as_deref()
+            && !matches!(kind, "github" | "gitlab")
+        {
+            bail!("forge.kind must be \"github\" or \"gitlab\", not '{kind}'");
+        }
+        Ok(ForgeConfig {
+            kind: self.kind,
+            gh: self.gh,
+            glab: self.glab,
+        })
+    }
 }
 
 /// Per-language theme sections: language name → key → color string.
@@ -71,6 +105,7 @@ fn split_theme(
 pub struct Config {
     pub base: Option<String>,
     pub editor: String,
+    pub forge: ForgeConfig,
     pub keymap: Keymap,
     pub theme: Theme,
 }
@@ -111,9 +146,14 @@ fn load_at(path: &Path) -> Result<Config> {
     }
     let theme = Theme::from_all_overrides(&flat, &langs)
         .with_context(|| format!("invalid [theme] in {}", path.display()))?;
+    let forge = file
+        .forge
+        .into_config()
+        .with_context(|| format!("invalid [forge] in {}", path.display()))?;
     Ok(Config {
         base: file.base,
         editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
+        forge,
         keymap,
         theme,
     })
@@ -173,7 +213,16 @@ pub fn default_toml() -> String {
          # substituted; the file path is appended when {file} is absent.\n\
          #   editor = \"code -g {file}:{line}\"   (Windows: \"code.cmd\")\n\
          #   editor = \"subl {file}:{line}\"\n\
-         editor = \"nvim +{line}\"\n\n[keys]\n",
+         editor = \"nvim +{line}\"\n\n\
+         # Pull-request view (the p key) talks to GitHub/GitLab through\n\
+         # the official gh/glab CLIs — install one and run its `auth\n\
+         # login`. The forge is detected from the origin remote URL; set\n\
+         # kind for self-hosted hosts naming neither \"github\" nor\n\
+         # \"gitlab\".\n\
+         # [forge]\n\
+         # kind = \"github\"          # or \"gitlab\"\n\
+         # gh = \"/path/to/gh\"       # binary overrides\n\
+         # glab = \"/path/to/glab\"\n\n[keys]\n",
     );
     for (name, _, keys) in KEY_DEFAULTS {
         let list = keys

@@ -141,6 +141,28 @@ fn pure_rename_has_no_hunks() {
 }
 
 #[test]
+fn file_at_revision_reads_local_objects_and_degrades_to_none() {
+    let tmp = fixture();
+    let vcs = detect(tmp.path()).unwrap();
+    let cmp = vcs.comparison(Some("master")).unwrap();
+
+    // The ancestor commit exists locally: content comes back.
+    assert_eq!(
+        vcs.file_at_revision(&cmp.ancestor, Path::new("lib.rs"))
+            .as_deref(),
+        Some("fn main() {}\n")
+    );
+    // Absent path at that revision, and an unknown revision (the PR-view
+    // case when the PR's commits were never fetched): both are None.
+    assert_eq!(
+        vcs.file_at_revision(&cmp.ancestor, Path::new("nope.rs")),
+        None
+    );
+    let unknown = drift::vcs::model::RevisionId("f".repeat(40));
+    assert_eq!(vcs.file_at_revision(&unknown, Path::new("lib.rs")), None);
+}
+
+#[test]
 fn file_at_ancestor_returns_old_side_content() {
     let tmp = fixture();
     let vcs = detect(tmp.path()).unwrap();
@@ -235,7 +257,11 @@ fn commits_lists_branch_commits_newest_first() {
     let dir = tmp.path();
     write(dir, "second.txt", "more\n");
     git(dir, &["add", "second.txt"]);
-    git_dated(dir, "2030-01-01T00:00:00", &["commit", "-qm", "second change"]);
+    git_dated(
+        dir,
+        "2030-01-01T00:00:00",
+        &["commit", "-qm", "second change"],
+    );
 
     let vcs = detect(dir).unwrap();
     let cmp = vcs.comparison(Some("master")).unwrap();
