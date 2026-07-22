@@ -4,12 +4,24 @@
 use std::path::Path;
 use std::process::Command;
 
-use drift::vcs::model::{FileDiff, FileStatus, LineKind};
+use drift::vcs::model::{FileDiff, FileStatus, LineKind, Scope};
 use drift::vcs::{VcsError, detect};
 
 fn git(dir: &Path, args: &[&str]) {
     let status = Command::new("git")
         .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("failed to run git");
+    assert!(status.status.success(), "git {args:?} failed");
+}
+
+/// Like [`git`], with a fixed committer date — commit ordering tests need
+/// distinct timestamps.
+fn git_dated(dir: &Path, date: &str, args: &[&str]) {
+    let status = Command::new("git")
+        .args(args)
+        .env("GIT_COMMITTER_DATE", date)
         .current_dir(dir)
         .output()
         .expect("failed to run git");
@@ -215,6 +227,76 @@ fn hunk_line_numbers_match_file_content() {
     }
     // The hunk must start where its first context line actually is.
     assert_eq!(hunks[0].lines[0].new_lineno, Some(hunks[0].new_range.0));
+}
+
+#[test]
+fn commits_lists_branch_commits_newest_first() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    write(dir, "second.txt", "more\n");
+    git(dir, &["add", "second.txt"]);
+    git_dated(dir, "2030-01-01T00:00:00", &["commit", "-qm", "second change"]);
+
+    let vcs = detect(dir).unwrap();
+    let cmp = vcs.comparison(Some("master")).unwrap();
+    let commits = vcs.commits(&cmp).unwrap();
+    let summaries: Vec<_> = commits.iter().map(|c| c.summary.as_str()).collect();
+    assert_eq!(summaries, vec!["second change", "committed work"]);
+    assert!(!commits[0].short_id.is_empty());
+    assert!(commits[0].id.0.starts_with(&commits[0].short_id));
+}
+
+#[test]
+fn untracked_scope_lists_only_untracked_files() {
+    let tmp = fixture();
+    let vcs = detect(tmp.path()).unwrap();
+    let mut cmp = vcs.comparison(Some("master")).unwrap();
+    cmp.scope = Scope::Untracked;
+
+    let files = vcs.changed_files(&cmp).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, Path::new("untracked.rs"));
+    assert_eq!(files[0].status, FileStatus::Untracked);
+}
+
+#[test]
+fn commit_scope_reviews_one_commit_against_its_parent() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    let vcs = detect(dir).unwrap();
+    let mut cmp = vcs.comparison(Some("master")).unwrap();
+    let commits = vcs.commits(&cmp).unwrap();
+    assert_eq!(commits.len(), 1);
+    assert_eq!(commits[0].summary, "committed work");
+    cmp.scope = Scope::Commit(commits[0].id.clone());
+
+    // The commit modified lib.rs and renamed oldname.txt; the uncommitted
+    // edit and the untracked file are outside this scope.
+    let files = vcs.changed_files(&cmp).unwrap();
+    assert_eq!(files.len(), 2);
+    let lib = files
+        .iter()
+        .find(|f| f.path == Path::new("lib.rs"))
+        .unwrap();
+    assert_eq!(lib.status, FileStatus::Modified);
+    let renamed = files
+        .iter()
+        .find(|f| f.path == Path::new("newname.txt"))
+        .unwrap();
+    assert_eq!(renamed.status, FileStatus::Renamed);
+    assert_eq!(renamed.old_path.as_deref(), Some(Path::new("oldname.txt")));
+
+    // The new side is the commit's tree, not the working copy: an edit
+    // after the commit must not leak into its diff.
+    write(dir, "lib.rs", "fn main() { changed again }\n");
+    let FileDiff::Text { hunks } = vcs.file_diff(&cmp, lib).unwrap() else {
+        panic!("expected text diff");
+    };
+    assert_eq!(hunks[0].lines[1].content, "fn main() { println!(\"hi\"); }");
+    assert_eq!(
+        vcs.file_at_ancestor(&cmp, lib).as_deref(),
+        Some("fn main() {}\n")
+    );
 }
 
 #[test]

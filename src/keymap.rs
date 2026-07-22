@@ -205,7 +205,7 @@ const HELP: &[(&[Action], &str)] = &[
         "resize panes (or drag the gap)",
     ),
     (&[Action::OpenEditor], "open the file in your editor"),
-    (&[Action::PickBase], "choose the base branch"),
+    (&[Action::PickBase], "choose base branch, then review scope"),
     (&[Action::Refresh], "refresh"),
     (&[Action::Quit], "quit"),
 ];

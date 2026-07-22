@@ -31,7 +31,7 @@ use crate::processor::view::{FileView, char_to_byte};
 use crate::theme::Theme;
 use crate::ui::CODE_GUTTER;
 use crate::vcs::Vcs;
-use crate::vcs::model::{ChangedFile, Comparison};
+use crate::vcs::model::{ChangedFile, Comparison, Scope};
 
 use code_view::{CodeView, TextPos};
 use panes::PaneLayout;
@@ -43,6 +43,31 @@ use view_cache::ViewCache;
 pub struct BasePicker {
     pub branches: Vec<String>,
     pub cursor: usize,
+}
+
+/// The scope picker overlay that follows a branch choice: review
+/// everything, only untracked files, or one commit.
+pub struct ScopePicker {
+    pub entries: Vec<(Scope, String)>,
+    pub cursor: usize,
+}
+
+/// Whichever picker overlay is open.
+pub enum Picker {
+    Base(BasePicker),
+    Scope(ScopePicker),
+}
+
+impl Picker {
+    fn move_cursor(&mut self, delta: isize) {
+        let (cursor, len) = match self {
+            Picker::Base(picker) => (&mut picker.cursor, picker.branches.len()),
+            Picker::Scope(picker) => (&mut picker.cursor, picker.entries.len()),
+        };
+        *cursor = cursor
+            .saturating_add_signed(delta)
+            .min(len.saturating_sub(1));
+    }
 }
 
 pub struct App {
@@ -61,8 +86,8 @@ pub struct App {
     current: Option<usize>,
     /// The `?` keybinding overlay is open; any key closes it.
     help_open: bool,
-    /// The base-branch picker overlay, when open.
-    picker: Option<BasePicker>,
+    /// The open picker overlay (base branch or review scope), if any.
+    picker: Option<Picker>,
     /// Vim-style count prefix: typed digits repeat the next motion.
     count: Option<usize>,
     /// Tree search: the query (highlights persist until Esc)…
@@ -154,8 +179,22 @@ impl App {
         self.help_open
     }
 
-    pub fn picker(&self) -> Option<&BasePicker> {
+    pub fn picker(&self) -> Option<&Picker> {
         self.picker.as_ref()
+    }
+
+    /// The status bar's comparison segment, e.g. " main ← feature ".
+    /// Also the click target that opens the base picker.
+    pub fn comparison_label(&self) -> String {
+        let scope = match &self.cmp.scope {
+            Scope::All => String::new(),
+            Scope::Untracked => " · untracked".to_string(),
+            Scope::Commit(rev) => format!(" · {}", &rev.0[..rev.0.len().min(7)]),
+        };
+        format!(
+            " {} ← {}{} ",
+            self.cmp.base_label, self.cmp.work_label, scope
+        )
     }
 
     pub fn pending_count(&self) -> Option<usize> {
@@ -382,6 +421,14 @@ impl App {
         Ok(())
     }
 
+    /// Is the position on the status bar's comparison segment? The status
+    /// bar is the single row below the main area.
+    fn on_comparison_label(&self, position: Position) -> bool {
+        let status_row = self.layout.main_area.y + self.layout.main_area.height;
+        position.y == status_row
+            && (position.x as usize) < self.comparison_label().chars().count()
+    }
+
     /// Queue the shown file for the editor, at the cursor's line.
     fn request_editor(&mut self) {
         let Some(file) = self.current_file() else {
@@ -397,22 +444,34 @@ impl App {
     }
 
     /// Picker keys are a fixed modal micro-map: j/k/arrows move, Enter
-    /// selects, Esc/q cancel.
+    /// selects, Esc/q cancel. Choosing a branch chains into the scope
+    /// picker; choosing a scope applies it.
     fn handle_picker_key(&mut self, code: KeyCode) -> Result<()> {
-        let Some(picker) = &mut self.picker else {
-            return Ok(());
-        };
         match code {
             KeyCode::Esc | KeyCode::Char('q') => self.picker = None,
-            KeyCode::Char('k') | KeyCode::Up => picker.cursor = picker.cursor.saturating_sub(1),
+            KeyCode::Char('k') | KeyCode::Up => {
+                if let Some(picker) = &mut self.picker {
+                    picker.move_cursor(-1);
+                }
+            }
             KeyCode::Char('j') | KeyCode::Down => {
-                picker.cursor = (picker.cursor + 1).min(picker.branches.len().saturating_sub(1));
+                if let Some(picker) = &mut self.picker {
+                    picker.move_cursor(1);
+                }
             }
-            KeyCode::Enter => {
-                let base = picker.branches[picker.cursor].clone();
-                self.picker = None;
-                self.set_base(&base)?;
-            }
+            KeyCode::Enter => match self.picker.take() {
+                Some(Picker::Base(picker)) => {
+                    let base = picker.branches[picker.cursor].clone();
+                    if self.set_base(&base)? {
+                        self.open_scope_picker()?;
+                    }
+                }
+                Some(Picker::Scope(picker)) => {
+                    let scope = picker.entries[picker.cursor].0.clone();
+                    self.set_scope(scope)?;
+                }
+                None => {}
+            },
             _ => {}
         }
         Ok(())
@@ -428,24 +487,61 @@ impl App {
             .iter()
             .position(|b| *b == self.cmp.base_label)
             .unwrap_or(0);
-        self.picker = Some(BasePicker { branches, cursor });
+        self.picker = Some(Picker::Base(BasePicker { branches, cursor }));
+        Ok(())
+    }
+
+    fn open_scope_picker(&mut self) -> Result<()> {
+        let commits = match self.vcs.commits(&self.cmp) {
+            Ok(commits) => commits,
+            Err(err) => {
+                self.notice = Some(format!("cannot list commits: {err}"));
+                Vec::new()
+            }
+        };
+        let mut entries = vec![
+            (Scope::All, "all changes".to_string()),
+            (Scope::Untracked, "untracked files".to_string()),
+        ];
+        entries.extend(commits.into_iter().map(|commit| {
+            let label = format!("{} {}", commit.short_id, commit.summary);
+            (Scope::Commit(commit.id), label)
+        }));
+        let cursor = entries
+            .iter()
+            .position(|(scope, _)| *scope == self.cmp.scope)
+            .unwrap_or(0);
+        self.picker = Some(Picker::Scope(ScopePicker { entries, cursor }));
         Ok(())
     }
 
     /// Switch the comparison base; on failure (e.g. no common ancestor)
     /// the old comparison stays and the error lands in the status bar.
-    fn set_base(&mut self, base: &str) -> Result<()> {
+    /// Returns whether `base` is the active base afterwards.
+    fn set_base(&mut self, base: &str) -> Result<bool> {
         if base == self.cmp.base_label {
-            return Ok(());
+            return Ok(true);
         }
         match self.vcs.comparison(Some(base)) {
             Ok(cmp) => {
                 self.cmp = cmp;
                 self.reload()?;
+                Ok(true)
             }
-            Err(err) => self.notice = Some(format!("cannot compare against '{base}': {err}")),
+            Err(err) => {
+                self.notice = Some(format!("cannot compare against '{base}': {err}"));
+                Ok(false)
+            }
         }
-        Ok(())
+    }
+
+    /// Narrow (or restore) which slice of the comparison is reviewed.
+    fn set_scope(&mut self, scope: Scope) -> Result<()> {
+        if scope == self.cmp.scope {
+            return Ok(());
+        }
+        self.cmp.scope = scope;
+        self.reload()
     }
 
     /// The mouse wheel scrolls whatever it hovers without moving cursors;
@@ -461,6 +557,11 @@ impl App {
         let tree_viewport = self.layout.tree_area.height as usize;
         let code_viewport = self.layout.code_area.height as usize;
         match mouse.kind {
+            // The comparison segment at the status bar's left edge opens
+            // the picker, mirroring the pick_base key.
+            MouseEventKind::Down(MouseButton::Left) if self.on_comparison_label(position) => {
+                self.open_base_picker()?;
+            }
             MouseEventKind::Down(MouseButton::Left) if self.layout.on_divider(position) => {
                 self.layout.resizing = true;
             }
@@ -650,14 +751,29 @@ impl App {
         std::thread::spawn(move || {
             let result = (|| {
                 let vcs = crate::vcs::detect(&root).map_err(|e| e.to_string())?;
-                let cmp = if refresh_cmp {
+                let mut cmp = if refresh_cmp {
                     // Mid-operation states (rebase, unborn HEAD) can fail
                     // to resolve; keep reviewing against the old ancestor.
-                    vcs.comparison(Some(&cmp.base_label)).unwrap_or(cmp)
+                    match vcs.comparison(Some(&cmp.base_label)) {
+                        Ok(mut fresh) => {
+                            fresh.scope = cmp.scope.clone();
+                            fresh
+                        }
+                        Err(_) => cmp,
+                    }
                 } else {
                     cmp
                 };
-                let files = vcs.changed_files(&cmp).map_err(|e| e.to_string())?;
+                let files = match vcs.changed_files(&cmp) {
+                    Ok(files) => files,
+                    // A scoped commit can vanish (rebase, amend): widen
+                    // back to everything rather than failing the refresh.
+                    Err(_) if cmp.scope != Scope::All => {
+                        cmp.scope = Scope::All;
+                        vcs.changed_files(&cmp).map_err(|e| e.to_string())?
+                    }
+                    Err(err) => return Err(err.to_string()),
+                };
                 Ok((cmp, files))
             })();
             let _ = tx.send(AppEvent::StatusReady { seq, result });

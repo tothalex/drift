@@ -1,5 +1,6 @@
-//! The base-branch picker: a floating panel listing branches by recent
-//! activity. Enter switches the comparison, Esc cancels.
+//! The picker overlays: a floating panel listing base branches or, after
+//! a branch is chosen, review scopes (all changes, untracked files, one
+//! commit). Enter selects, Esc cancels.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -7,24 +8,42 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
-use crate::app::App;
+use crate::app::{App, Picker};
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let Some(picker) = app.picker() else { return };
     let theme = &app.theme;
 
+    // Rows as (label, is the active choice) pairs, picker-agnostic.
+    let (title, items, cursor): (&str, Vec<(&str, bool)>, usize) = match picker {
+        Picker::Base(picker) => (
+            "compare against",
+            picker
+                .branches
+                .iter()
+                .map(|branch| (branch.as_str(), *branch == app.cmp.base_label))
+                .collect(),
+            picker.cursor,
+        ),
+        Picker::Scope(picker) => (
+            "review",
+            picker
+                .entries
+                .iter()
+                .map(|(scope, label)| (label.as_str(), *scope == app.cmp.scope))
+                .collect(),
+            picker.cursor,
+        ),
+    };
+
     let area = frame.area();
-    let width = picker
-        .branches
+    let width = items
         .iter()
-        .map(|b| b.chars().count() as u16 + 10)
+        .map(|(label, _)| label.chars().count() as u16 + 10)
         .max()
         .unwrap_or(20)
         .clamp(28, area.width);
-    let rows = picker
-        .branches
-        .len()
-        .min(area.height.saturating_sub(6) as usize);
+    let rows = items.len().min(area.height.saturating_sub(6) as usize);
     let height = (rows as u16 + 3).min(area.height);
     let panel = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
@@ -34,23 +53,21 @@ pub fn draw(frame: &mut Frame, app: &App) {
     };
 
     // Window the list around the cursor.
-    let offset = picker
-        .cursor
+    let offset = cursor
         .saturating_sub(rows / 2)
-        .min(picker.branches.len().saturating_sub(rows));
+        .min(items.len().saturating_sub(rows));
 
     let mut lines = vec![Line::styled(
-        "   compare against",
+        format!("   {title}"),
         Style::default().fg(theme.muted),
     )];
-    for (index, branch) in picker.branches.iter().enumerate().skip(offset).take(rows) {
-        let current = *branch == app.cmp.base_label;
-        let marker = if current { "●" } else { " " };
+    for (index, (label, current)) in items.iter().enumerate().skip(offset).take(rows) {
+        let marker = if *current { "●" } else { " " };
         let mut line = Line::from(vec![
             Span::styled(format!("   {marker} "), Style::default().fg(theme.muted)),
-            Span::raw(branch.clone()),
+            Span::raw(label.to_string()),
         ]);
-        if index == picker.cursor {
+        if index == cursor {
             line.style = Style::default()
                 .bg(theme.select_bg)
                 .add_modifier(Modifier::BOLD);

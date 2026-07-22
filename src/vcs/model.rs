@@ -19,6 +19,30 @@ pub struct Comparison {
     pub ancestor: RevisionId,
     /// The work being reviewed, e.g. the current branch name.
     pub work_label: String,
+    /// Which slice of the work is under review.
+    pub scope: Scope,
+}
+
+/// A slice of the comparison to review.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Scope {
+    /// Everything different from the ancestor — committed or not.
+    #[default]
+    All,
+    /// Only files the VCS does not track yet.
+    Untracked,
+    /// One commit's own changes, against its first parent.
+    Commit(RevisionId),
+}
+
+/// A commit on the work side, as offered by the scope picker.
+#[derive(Debug, Clone)]
+pub struct CommitInfo {
+    pub id: RevisionId,
+    /// Abbreviated id for display.
+    pub short_id: String,
+    /// First line of the commit message.
+    pub summary: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

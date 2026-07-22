@@ -7,7 +7,7 @@ pub mod unidiff;
 
 use std::path::{Path, PathBuf};
 
-use model::{ChangedFile, Comparison, FileDiff};
+use model::{ChangedFile, CommitInfo, Comparison, FileDiff};
 
 #[derive(Debug, thiserror::Error)]
 pub enum VcsError {
@@ -36,7 +36,7 @@ pub trait Vcs {
     fn comparison(&self, base_override: Option<&str>) -> Result<Comparison, VcsError>;
 
     /// Everything different between the ancestor and the working copy —
-    /// committed or not — plus untracked files.
+    /// committed or not — plus untracked files, narrowed by `cmp.scope`.
     fn changed_files(&self, cmp: &Comparison) -> Result<Vec<ChangedFile>, VcsError>;
 
     /// Structured diff for one file. Called lazily per selection.
@@ -49,6 +49,10 @@ pub trait Vcs {
 
     /// Branches usable as a comparison base, most recently active first.
     fn branches(&self) -> Result<Vec<String>, VcsError>;
+
+    /// Commits on the work side since the ancestor, newest first. Feeds
+    /// the scope picker; the comparison's own scope is ignored.
+    fn commits(&self, cmp: &Comparison) -> Result<Vec<CommitInfo>, VcsError>;
 
     /// Of these root-relative paths, the ones the VCS does not ignore.
     /// Used by the file watcher to drop build-artifact noise; best-effort

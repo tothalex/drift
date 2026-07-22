@@ -16,7 +16,8 @@ use gix::status::index_worktree::iter::Summary;
 use imara_diff::{Algorithm, Diff, InternedInput};
 
 use crate::vcs::model::{
-    ChangedFile, Comparison, DiffLine, FileDiff, FileStatus, Hunk, LineKind, RevisionId,
+    ChangedFile, CommitInfo, Comparison, DiffLine, FileDiff, FileStatus, Hunk, LineKind,
+    RevisionId, Scope,
 };
 use crate::vcs::{Vcs, VcsError};
 
@@ -61,11 +62,122 @@ impl GixVcs {
         Err(VcsError::NoDefaultBase)
     }
 
-    fn ancestor_blob(&self, ancestor: &RevisionId, path: &Path) -> Option<Vec<u8>> {
-        let id = gix::ObjectId::from_hex(ancestor.0.as_bytes()).ok()?;
+    fn blob_at(&self, rev: &RevisionId, path: &Path) -> Option<Vec<u8>> {
+        let id = gix::ObjectId::from_hex(rev.0.as_bytes()).ok()?;
         let commit = self.repo.find_object(id).ok()?.peel_to_commit().ok()?;
         let entry = commit.tree().ok()?.lookup_entry_by_path(path).ok()??;
         Some(entry.object().ok()?.detach().data)
+    }
+
+    fn find_commit(&self, rev: &RevisionId) -> Result<gix::Commit<'_>, VcsError> {
+        let id = gix::ObjectId::from_hex(rev.0.as_bytes())
+            .map_err(|_| VcsError::RevisionNotFound(rev.0.clone()))?;
+        self.repo
+            .find_object(id)
+            .map_err(|_| VcsError::RevisionNotFound(rev.0.clone()))?
+            .peel_to_commit()
+            .map_err(|_| VcsError::RevisionNotFound(rev.0.clone()))
+    }
+
+    fn first_parent(&self, rev: &RevisionId) -> Option<RevisionId> {
+        let parent = self.find_commit(rev).ok()?.parent_ids().next()?;
+        Some(RevisionId(parent.detach().to_string()))
+    }
+
+    /// The file's content on the old side of the scoped comparison: the
+    /// ancestor, or the commit's first parent under a commit scope.
+    fn old_side(&self, cmp: &Comparison, file: &ChangedFile) -> Option<Vec<u8>> {
+        if file.status == FileStatus::Untracked {
+            return None;
+        }
+        let old_path = file.old_path.as_deref().unwrap_or(&file.path);
+        match &cmp.scope {
+            Scope::Commit(rev) => self.blob_at(&self.first_parent(rev)?, old_path),
+            _ => self.blob_at(&cmp.ancestor, old_path),
+        }
+    }
+
+    /// The files a single commit changed, against its first parent (the
+    /// empty tree for a root commit).
+    fn commit_changed_files(&self, rev: &RevisionId) -> Result<Vec<ChangedFile>, VcsError> {
+        use gix::object::tree::diff::{Action, Change};
+
+        let commit = self.find_commit(rev)?;
+        let new_tree = commit.tree().map_err(tool)?;
+        let old_tree = match commit.parent_ids().next() {
+            Some(parent) => parent
+                .object()
+                .map_err(tool)?
+                .peel_to_commit()
+                .map_err(tool)?
+                .tree()
+                .map_err(tool)?,
+            None => self.repo.empty_tree(),
+        };
+
+        let mut files = Vec::new();
+        old_tree
+            .changes()
+            .map_err(tool)?
+            .options(|opts| {
+                opts.track_rewrites(Some(gix::diff::Rewrites {
+                    copies: None,
+                    percentage: Some(0.5),
+                    limit: 1000,
+                    track_empty: false,
+                }));
+            })
+            .for_each_to_obtain_tree(&new_tree, |change| {
+                let file = match change {
+                    Change::Addition {
+                        location,
+                        entry_mode,
+                        ..
+                    } => entry_mode.is_blob().then(|| ChangedFile {
+                        status: FileStatus::Added,
+                        path: PathBuf::from(location.to_str_lossy().into_owned()),
+                        old_path: None,
+                    }),
+                    Change::Deletion {
+                        location,
+                        entry_mode,
+                        ..
+                    } => entry_mode.is_blob().then(|| ChangedFile {
+                        status: FileStatus::Deleted,
+                        path: PathBuf::from(location.to_str_lossy().into_owned()),
+                        old_path: None,
+                    }),
+                    Change::Modification {
+                        location,
+                        entry_mode,
+                        ..
+                    } => entry_mode.is_blob().then(|| ChangedFile {
+                        status: FileStatus::Modified,
+                        path: PathBuf::from(location.to_str_lossy().into_owned()),
+                        old_path: None,
+                    }),
+                    Change::Rewrite {
+                        location,
+                        source_location,
+                        entry_mode,
+                        copy,
+                        ..
+                    } => entry_mode.is_blob().then(|| ChangedFile {
+                        status: if copy {
+                            FileStatus::Copied
+                        } else {
+                            FileStatus::Renamed
+                        },
+                        path: PathBuf::from(location.to_str_lossy().into_owned()),
+                        old_path: Some(PathBuf::from(source_location.to_str_lossy().into_owned())),
+                    }),
+                };
+                files.extend(file);
+                Ok::<_, std::convert::Infallible>(Action::Continue(()))
+            })
+            .map_err(tool)?;
+        files.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(files)
     }
 }
 
@@ -108,10 +220,14 @@ impl Vcs for GixVcs {
             base_label: base,
             ancestor: RevisionId(ancestor.to_string()),
             work_label,
+            scope: Scope::default(),
         })
     }
 
     fn changed_files(&self, cmp: &Comparison) -> Result<Vec<ChangedFile>, VcsError> {
+        if let Scope::Commit(rev) = &cmp.scope {
+            return self.commit_changed_files(rev);
+        }
         let ancestor_id = gix::ObjectId::from_hex(cmp.ancestor.0.as_bytes())
             .map_err(|err| VcsError::Tool(format!("bad ancestor id: {err}")))?;
         let tree_id = self
@@ -187,19 +303,20 @@ impl Vcs for GixVcs {
                 old_path,
             });
         }
+        if cmp.scope == Scope::Untracked {
+            files.retain(|file| file.status == FileStatus::Untracked);
+        }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
     }
 
     fn file_diff(&self, cmp: &Comparison, file: &ChangedFile) -> Result<FileDiff, VcsError> {
-        let old = match file.status {
-            FileStatus::Untracked => None,
-            _ => {
-                let old_path = file.old_path.as_deref().unwrap_or(&file.path);
-                self.ancestor_blob(&cmp.ancestor, old_path)
-            }
+        let old = self.old_side(cmp, file);
+        let new = match &cmp.scope {
+            // A commit's new side is its own tree, not the working copy.
+            Scope::Commit(rev) => self.blob_at(rev, &file.path),
+            _ => std::fs::read(self.root.join(&file.path)).ok(),
         };
-        let new = std::fs::read(self.root.join(&file.path)).ok();
         if is_binary(old.as_deref()) || is_binary(new.as_deref()) {
             return Ok(FileDiff::Binary);
         }
@@ -216,11 +333,7 @@ impl Vcs for GixVcs {
     }
 
     fn file_at_ancestor(&self, cmp: &Comparison, file: &ChangedFile) -> Option<String> {
-        if file.status == FileStatus::Untracked {
-            return None;
-        }
-        let old_path = file.old_path.as_deref().unwrap_or(&file.path);
-        let blob = self.ancestor_blob(&cmp.ancestor, old_path)?;
+        let blob = self.old_side(cmp, file)?;
         Some(String::from_utf8_lossy(&blob).into_owned())
     }
 
@@ -270,6 +383,40 @@ impl Vcs for GixVcs {
         }
         branches.sort_by_key(|(_, time)| -time);
         Ok(branches.into_iter().map(|(name, _)| name).collect())
+    }
+
+    fn commits(&self, cmp: &Comparison) -> Result<Vec<CommitInfo>, VcsError> {
+        let head = self
+            .repo
+            .head_id()
+            .map_err(|_| VcsError::RevisionNotFound("HEAD".to_string()))?;
+        let ancestor = gix::ObjectId::from_hex(cmp.ancestor.0.as_bytes())
+            .map_err(|err| VcsError::Tool(format!("bad ancestor id: {err}")))?;
+        let walk = self
+            .repo
+            .rev_walk([head.detach()])
+            .with_hidden([ancestor])
+            .sorting(gix::revision::walk::Sorting::ByCommitTime(
+                Default::default(),
+            ))
+            .all()
+            .map_err(tool)?;
+
+        let mut commits = Vec::new();
+        for info in walk {
+            let info = info.map_err(tool)?;
+            let commit = info.object().map_err(tool)?;
+            let summary = commit
+                .message()
+                .map(|message| message.summary().to_str_lossy().into_owned())
+                .unwrap_or_default();
+            commits.push(CommitInfo {
+                id: RevisionId(info.id.to_string()),
+                short_id: commit.id().shorten_or_id().to_string(),
+                summary,
+            });
+        }
+        Ok(commits)
     }
 }
 

@@ -8,7 +8,7 @@ use crate::app::App;
 
 pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let comparison = format!(" {} ← {} ", app.cmp.base_label, app.cmp.work_label);
+    let comparison = app.comparison_label();
     let mut spans = vec![
         Span::styled(
             comparison,
