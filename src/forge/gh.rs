@@ -7,20 +7,28 @@
 //! fixture strings in tests.
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use serde::Deserialize;
 
 use crate::forge::model::{Anchor, Comment, CommentThread, PrData, PrDetail, PullRequest, Side};
-use crate::forge::{Forge, ForgeError, concat_arrays, patch, run_cli};
+use crate::forge::{Forge, ForgeError, args, concat_arrays, patch, run_cli};
 
 pub struct GhCli {
     root: PathBuf,
     program: String,
+    /// Owner/repo never change within a session; fetched once for the
+    /// GraphQL calls that can't use gh's `{owner}`/`{repo}` placeholders.
+    repo: OnceLock<(String, String)>,
 }
 
 impl GhCli {
     pub fn new(root: PathBuf, program: String) -> GhCli {
-        GhCli { root, program }
+        GhCli {
+            root,
+            program,
+            repo: OnceLock::new(),
+        }
     }
 
     fn run(&self, args: &[String]) -> Result<String, ForgeError> {
@@ -29,9 +37,14 @@ impl GhCli {
 
     /// Owner and repo name — GraphQL has no `{owner}`/`{repo}`
     /// placeholder substitution, so they must be passed as variables.
+    /// Fetched once per session.
     fn repo_owner_name(&self) -> Result<(String, String), ForgeError> {
+        if let Some(repo) = self.repo.get() {
+            return Ok(repo.clone());
+        }
         let json = self.run(&args(&["repo", "view", "--json", "owner,name"]))?;
-        parse_repo(&json)
+        let repo = parse_repo(&json)?;
+        Ok(self.repo.get_or_init(|| repo).clone())
     }
 
     /// The PR's review threads from GraphQL: node id (the resolve
@@ -39,6 +52,8 @@ impl GhCli {
     /// join key back to our threads).
     fn thread_meta(&self, number: u64) -> Result<Vec<ThreadMeta>, ForgeError> {
         let (owner, name) = self.repo_owner_name()?;
+        // first:100 is unpaginated: PRs beyond 100 review threads lose
+        // resolved state and can't resolve the overflow threads.
         const QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){\
              repository(owner:$owner,name:$name){pullRequest(number:$number){\
              reviewThreads(first:100){nodes{id isResolved \
@@ -67,15 +82,7 @@ struct ThreadMeta {
     resolved: bool,
 }
 
-fn args(parts: &[&str]) -> Vec<String> {
-    parts.iter().map(|part| part.to_string()).collect()
-}
-
 impl Forge for GhCli {
-    fn name(&self) -> &'static str {
-        "github"
-    }
-
     fn pr_noun(&self) -> &'static str {
         "pull request"
     }
@@ -124,7 +131,8 @@ impl Forge for GhCli {
         // so a failing GraphQL call degrades to "unknown", not an error.
         if let Ok(meta) = self.thread_meta(number) {
             for thread in &mut threads {
-                if let Some(meta) = meta.iter().find(|m| m.root.to_string() == thread.key) {
+                let root: Option<u64> = thread.key.parse().ok();
+                if let Some(meta) = meta.iter().find(|m| Some(m.root) == root) {
                     thread.resolved = Some(meta.resolved);
                 }
             }
@@ -150,12 +158,10 @@ impl Forge for GhCli {
         // Resolving is GraphQL-only; find the thread node whose root
         // review comment matches our REST-side key.
         let meta = self.thread_meta(number)?;
-        let node = meta
-            .iter()
-            .find(|m| m.root.to_string() == thread_key)
-            .ok_or_else(|| {
-                ForgeError::Parse("gh", "thread not found among review threads".to_string())
-            })?;
+        let root: Option<u64> = thread_key.parse().ok();
+        let node = meta.iter().find(|m| Some(m.root) == root).ok_or_else(|| {
+            ForgeError::Invalid("thread not found among review threads".to_string())
+        })?;
         let mutation = if resolved {
             "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}"
         } else {
@@ -227,8 +233,8 @@ fn inline_args(detail: &PrDetail, anchor: &Anchor, body: &str) -> Result<Vec<Str
         Side::New => ("RIGHT", anchor.new_line),
         Side::Old => ("LEFT", anchor.old_line),
     };
-    let line = line
-        .ok_or_else(|| ForgeError::Parse("gh", "comment anchor has no line number".to_string()))?;
+    let line =
+        line.ok_or_else(|| ForgeError::Invalid("comment anchor has no line number".to_string()))?;
     Ok(args(&[
         "api",
         &format!("repos/{{owner}}/{{repo}}/pulls/{}/comments", detail.number),

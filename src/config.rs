@@ -129,7 +129,13 @@ fn load_at(path: &Path) -> Result<Config> {
     let file: ConfigFile = match std::fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text)
             .with_context(|| format!("invalid config at {}", path.display()))?,
-        Err(_) => ConfigFile::default(),
+        // A missing config means defaults; any other read failure
+        // (permissions, I/O) is the one thing the user can't diagnose
+        // from silently-default behavior — surface it.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => ConfigFile::default(),
+        Err(err) => {
+            return Err(err).with_context(|| format!("cannot read {}", path.display()));
+        }
     };
     let keymap = Keymap::from_overrides(&file.keys)
         .with_context(|| format!("invalid [keys] in {}", path.display()))?;

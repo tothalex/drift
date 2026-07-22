@@ -11,6 +11,8 @@ use crossterm::event::{KeyCode, KeyModifiers};
 pub enum Action {
     Quit,
     Help,
+    FocusTree,
+    FocusCode,
     NextFile,
     PrevFile,
     ToggleDir,
@@ -48,8 +50,10 @@ pub enum Action {
 pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("quit", Action::Quit, &["q", "ctrl-c"]),
     ("help", Action::Help, &["?"]),
-    ("next_file", Action::NextFile, &["l", "right"]),
-    ("prev_file", Action::PrevFile, &["h", "left"]),
+    ("focus_tree", Action::FocusTree, &["h", "left"]),
+    ("focus_code", Action::FocusCode, &["l", "right"]),
+    ("next_file", Action::NextFile, &["L"]),
+    ("prev_file", Action::PrevFile, &["H"]),
     ("toggle_dir", Action::ToggleDir, &["o", "enter", "space"]),
     ("cursor_down", Action::CursorDown, &["j", "down"]),
     ("cursor_up", Action::CursorUp, &["k", "up"]),
@@ -112,7 +116,7 @@ impl Keymap {
             let specs: Vec<String> = match overrides.get(*name) {
                 Some(user) if !user.is_empty() => user.clone(),
                 Some(_) => bail!("key action '{name}' has no keys"),
-                None => defaults.iter().map(|s| s.to_string()).collect(),
+                None => defaults.iter().map(ToString::to_string).collect(),
             };
             for spec in specs {
                 let (code, ctrl) = parse_key(&spec)?;
@@ -176,20 +180,24 @@ impl Default for Keymap {
 /// Help rows: which actions share a row, and the description.
 const HELP: &[(&[Action], &str)] = &[
     (
+        &[Action::FocusTree, Action::FocusCode],
+        "focus the file tree / the code pane",
+    ),
+    (
         &[Action::NextFile, Action::PrevFile],
         "next / previous file (skips reviewed)",
     ),
     (&[Action::CheckFile], "check file as reviewed, go to next"),
     (&[Action::UncheckLast], "uncheck the last review, jump back"),
     (&[Action::ToggleDir], "open / close folder"),
-    (&[Action::Search], "search the file tree"),
+    (&[Action::Search], "search the focused pane"),
     (
         &[Action::NextMatch, Action::PrevMatch],
-        "next / previous match",
+        "next / previous match (no search: change)",
     ),
     (
         &[Action::CursorDown, Action::CursorUp],
-        "move the code cursor",
+        "move the cursor in the focused pane",
     ),
     (&[Action::JumpDown, Action::JumpUp], "jump 15 lines"),
     (
@@ -306,8 +314,8 @@ mod tests {
             map.action_for(KeyCode::Tab, KeyModifiers::NONE),
             Some(Action::NextFile)
         );
-        // The default 'l' no longer maps to next_file.
-        assert_eq!(map.action_for(KeyCode::Char('l'), KeyModifiers::NONE), None);
+        // The default 'L' no longer maps to next_file.
+        assert_eq!(map.action_for(KeyCode::Char('L'), KeyModifiers::NONE), None);
     }
 
     #[test]
@@ -330,6 +338,22 @@ mod tests {
                     "{action:?} appears in help but has no binding"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn every_action_appears_in_help() {
+        // The inverse direction: an action added to KEY_DEFAULTS but
+        // forgotten in HELP would silently vanish from the `?` overlay.
+        // (Help itself is reasonably absent — you're inside the overlay.)
+        for (name, action, _) in KEY_DEFAULTS {
+            if *action == Action::Help {
+                continue;
+            }
+            assert!(
+                HELP.iter().any(|(actions, _)| actions.contains(action)),
+                "'{name}' is bound but missing from the help overlay"
+            );
         }
     }
 }

@@ -31,9 +31,9 @@ pub struct Theme {
     pub tag: Color,
     /// Review-thread accents in the PR view: quote bars and authors.
     pub thread: Color,
-    /// Matched characters during tree search.
+    /// Search-hit highlight, in the tree and the code view alike.
     pub search: Color,
-    /// The `?` overlay background.
+    /// Floating panels: the `?` overlay, pickers, the comment composer.
     pub panel_bg: Color,
     /// The VISUAL mode badge.
     pub visual_badge_fg: Color,

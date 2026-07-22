@@ -3,12 +3,11 @@
 //! commit). Enter selects, Esc cancels.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::{App, Picker};
+use crate::ui::draw_panel;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let Some(picker) = app.picker() else { return };
@@ -46,20 +45,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
     };
 
     let area = frame.area();
+    // max first: a terminal narrower than the 28-column floor must not
+    // invert the clamp bounds (u16 clamp panics on min > max).
     let width = items
         .iter()
         .map(|(label, _)| label.chars().count() as u16 + 10)
         .max()
         .unwrap_or(20)
-        .clamp(28, area.width);
+        .max(28)
+        .min(area.width);
     let rows = items.len().min(area.height.saturating_sub(6) as usize);
-    let height = (rows as u16 + 3).min(area.height);
-    let panel = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    };
 
     // Window the list around the cursor.
     let offset = cursor
@@ -83,10 +78,5 @@ pub fn draw(frame: &mut Frame, app: &App) {
         }
         lines.push(line);
     }
-
-    frame.render_widget(Clear, panel);
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme.panel_bg)),
-        panel,
-    );
+    draw_panel(frame, theme, lines, width);
 }

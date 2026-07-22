@@ -71,8 +71,15 @@ base branch, kept live as you edit:
   word-level emphasis on the exact edit.
 - Comment-only lines render as prose with `TODO`/`FIXME` tags accented;
   unchanged comment blocks can be folded to a one-line summary.
+- Two-pane focus: `h` aims the cursor keys at the file tree, `l` at the
+  code view (the lit-up header shows which; clicking a pane focuses it
+  too). `H`/`L` step between files, skipping ones checked off.
+- Each pane keeps its own `/` search with match highlighting; `n`/`N`
+  cycle the focused pane's matches — and in an unsearched code view
+  they hop between the changes themselves, so large files navigate by
+  edit, not by scrolling.
 - File tree with review progress: check files off as you go, navigation
-  skips what's done. Incremental search with match highlighting.
+  skips what's done.
 - Vim-style keys (counts, `g`/`G`, visual mode, yank) and full mouse
   support (wheel per pane, click, drag-to-copy, pane resize).
 - Live reload: the working tree is watched, so edits made outside the

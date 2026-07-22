@@ -3,12 +3,12 @@
 //! [`crate::app::compose::Compose`]; this only paints rows.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
+use crate::processor::view::char_to_byte;
+use crate::ui::draw_panel;
 
 pub fn draw(frame: &mut Frame, app: &App) {
     let Some(compose) = app.compose() else { return };
@@ -39,7 +39,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         if nth == cursor_row {
             // Paint the cursor cell reversed; it may rest one past the
             // last character.
-            let at = crate::processor::view::char_to_byte(row, cursor_col);
+            let at = char_to_byte(row, cursor_col);
             let under: String = row[at..].chars().take(1).collect();
             parts.push(Span::raw(row[..at].to_string()));
             parts.push(Span::styled(
@@ -68,16 +68,5 @@ pub fn draw(frame: &mut Frame, app: &App) {
         dim,
     )));
 
-    let height = (lines.len() as u16 + 1).min(area.height);
-    let panel = Rect {
-        x: area.x + (area.width.saturating_sub(width)) / 2,
-        y: area.y + (area.height.saturating_sub(height)) / 2,
-        width,
-        height,
-    };
-    frame.render_widget(Clear, panel);
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme.panel_bg)),
-        panel,
-    );
+    draw_panel(frame, theme, lines, width);
 }

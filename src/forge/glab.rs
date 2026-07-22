@@ -14,7 +14,7 @@ use serde::Deserialize;
 use crate::forge::model::{
     Anchor, Comment, CommentThread, PrData, PrDetail, PrFile, PullRequest, Side,
 };
-use crate::forge::{Forge, ForgeError, concat_arrays, run_cli};
+use crate::forge::{Forge, ForgeError, args, concat_arrays, run_cli};
 use crate::vcs::model::{ChangedFile, FileStatus};
 use crate::vcs::unidiff;
 
@@ -33,15 +33,13 @@ impl GlabCli {
     }
 }
 
-fn args(parts: &[&str]) -> Vec<String> {
-    parts.iter().map(|part| part.to_string()).collect()
+/// API path under the merge request, e.g. `mr(7, "/notes")` — the `:id`
+/// project placeholder is resolved by glab itself.
+fn mr(number: u64, tail: &str) -> String {
+    format!("projects/:id/merge_requests/{number}{tail}")
 }
 
 impl Forge for GlabCli {
-    fn name(&self) -> &'static str {
-        "gitlab"
-    }
-
     fn pr_noun(&self) -> &'static str {
         "merge request"
     }
@@ -55,13 +53,10 @@ impl Forge for GlabCli {
     }
 
     fn load(&self, number: u64) -> Result<PrData, ForgeError> {
-        let detail = parse_detail(&self.run(&args(&[
-            "api",
-            &format!("projects/:id/merge_requests/{number}"),
-        ]))?)?;
+        let detail = parse_detail(&self.run(&args(&["api", &mr(number, "")]))?)?;
         let files = parse_diffs(&self.run(&args(&[
             "api",
-            &format!("projects/:id/merge_requests/{number}/diffs?per_page=100"),
+            &mr(number, "/diffs?per_page=100"),
             "--paginate",
         ]))?)?;
         let (threads, conversation) = self.threads(number, &detail)?;
@@ -80,7 +75,7 @@ impl Forge for GlabCli {
     ) -> Result<(Vec<CommentThread>, Vec<Comment>), ForgeError> {
         let json = self.run(&args(&[
             "api",
-            &format!("projects/:id/merge_requests/{number}/discussions?per_page=100"),
+            &mr(number, "/discussions?per_page=100"),
             "--paginate",
         ]))?;
         parse_discussions(&json, &detail.head_sha)
@@ -121,7 +116,7 @@ impl Forge for GlabCli {
 fn delete_args(number: u64, comment_id: &str) -> Vec<String> {
     args(&[
         "api",
-        &format!("projects/:id/merge_requests/{number}/notes/{comment_id}"),
+        &mr(number, &format!("/notes/{comment_id}")),
         "-X",
         "DELETE",
     ])
@@ -130,7 +125,7 @@ fn delete_args(number: u64, comment_id: &str) -> Vec<String> {
 fn resolve_args(number: u64, thread_key: &str, resolved: bool) -> Vec<String> {
     args(&[
         "api",
-        &format!("projects/:id/merge_requests/{number}/discussions/{thread_key}"),
+        &mr(number, &format!("/discussions/{thread_key}")),
         "-X",
         "PUT",
         "-f",
@@ -141,7 +136,7 @@ fn resolve_args(number: u64, thread_key: &str, resolved: bool) -> Vec<String> {
 fn general_args(number: u64, body: &str) -> Vec<String> {
     args(&[
         "api",
-        &format!("projects/:id/merge_requests/{number}/notes"),
+        &mr(number, "/notes"),
         "-X",
         "POST",
         "-f",
@@ -152,7 +147,7 @@ fn general_args(number: u64, body: &str) -> Vec<String> {
 fn reply_args(number: u64, thread_key: &str, body: &str) -> Vec<String> {
     args(&[
         "api",
-        &format!("projects/:id/merge_requests/{number}/discussions/{thread_key}/notes"),
+        &mr(number, &format!("/discussions/{thread_key}/notes")),
         "-X",
         "POST",
         "-f",
@@ -165,8 +160,7 @@ fn reply_args(number: u64, thread_key: &str, body: &str) -> Vec<String> {
 /// this decision.
 fn inline_args(detail: &PrDetail, anchor: &Anchor, body: &str) -> Result<Vec<String>, ForgeError> {
     if anchor.old_line.is_none() && anchor.new_line.is_none() {
-        return Err(ForgeError::Parse(
-            "glab",
+        return Err(ForgeError::Invalid(
             "comment anchor has no line number".to_string(),
         ));
     }
@@ -174,7 +168,7 @@ fn inline_args(detail: &PrDetail, anchor: &Anchor, body: &str) -> Result<Vec<Str
     let old_path = anchor.old_path.as_deref().unwrap_or(&anchor.path);
     let mut out = args(&[
         "api",
-        &format!("projects/:id/merge_requests/{}/discussions", detail.number),
+        &mr(detail.number, "/discussions"),
         "-X",
         "POST",
         "-f",
@@ -245,7 +239,7 @@ fn parse_list(json: &str) -> Result<Vec<PullRequest>, ForgeError> {
         .collect())
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct ApiDiffRefs {
     #[serde(default)]
     base_sha: String,
@@ -277,11 +271,7 @@ struct ApiMergeRequest {
 fn parse_detail(json: &str) -> Result<PrDetail, ForgeError> {
     let mr: ApiMergeRequest =
         serde_json::from_str(json).map_err(|err| ForgeError::Parse("glab", err.to_string()))?;
-    let refs = mr.diff_refs.unwrap_or(ApiDiffRefs {
-        base_sha: String::new(),
-        head_sha: String::new(),
-        start_sha: String::new(),
-    });
+    let refs = mr.diff_refs.unwrap_or_default();
     Ok(PrDetail {
         number: mr.iid,
         title: mr.title,

@@ -8,6 +8,11 @@ use std::collections::BTreeMap;
 
 use crate::vcs::model::{ChangedFile, FileStatus};
 
+/// Root paths starting with this are virtual entries (about the whole
+/// changeset, not a file) and pin above everything — the contract the
+/// PR session's conversation entry relies on.
+pub const VIRTUAL_PREFIX: char = '#';
+
 pub struct FileTree {
     nodes: Vec<Node>,
     roots: Vec<usize>,
@@ -66,7 +71,7 @@ impl FileTree {
         // Virtual entries first, above every directory and file.
         let (virtuals, plain): (Vec<_>, Vec<_>) = std::mem::take(&mut root.files)
             .into_iter()
-            .partition(|(name, ..)| name.starts_with('#'));
+            .partition(|(name, ..)| name.starts_with(VIRTUAL_PREFIX));
         root.files = plain;
         for (label, index, status) in virtuals {
             let id = tree.nodes.len();

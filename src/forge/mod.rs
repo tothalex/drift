@@ -21,8 +21,6 @@ use model::{Anchor, CommentThread, PrData, PrDetail, PullRequest};
 /// Network-facing pull-request operations. Implementations shell out and
 /// block; the app calls them from background threads only.
 pub trait Forge: Send + Sync {
-    /// "github" / "gitlab".
-    fn name(&self) -> &'static str;
     /// UI copy: "pull request" / "merge request".
     fn pr_noun(&self) -> &'static str;
     fn list_open(&self) -> Result<Vec<PullRequest>, ForgeError>;
@@ -57,6 +55,10 @@ pub enum ForgeError {
     CliFailed { cli: &'static str, stderr: String },
     #[error("unexpected {0} output: {1}")]
     Parse(&'static str, String),
+    /// A request that can't be made (unanchorable comment, vanished
+    /// thread) — not a parse failure; the message stands alone.
+    #[error("{0}")]
+    Invalid(String),
     #[error("origin remote '{0}' is not a recognized forge; set [forge] kind in the config")]
     UnknownForge(String),
     #[error("no origin remote")]
@@ -75,7 +77,7 @@ pub struct ForgeConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForgeKind {
+enum ForgeKind {
     GitHub,
     GitLab,
 }
@@ -100,7 +102,7 @@ pub fn detect(root: &Path, config: &ForgeConfig) -> Result<Box<dyn Forge>, Forge
 /// The hostname of the repository's origin remote. Opens its own gix
 /// handle: gix repositories aren't shared across threads, and detection
 /// runs on background threads.
-pub fn origin_host(root: &Path) -> Result<String, ForgeError> {
+fn origin_host(root: &Path) -> Result<String, ForgeError> {
     let repo = gix::discover(root).map_err(|_| ForgeError::NoRemote)?;
     let remote = repo
         .find_remote("origin")
@@ -118,7 +120,7 @@ fn host_of_url(url: &gix::Url) -> Option<String> {
 /// host + optional config override → forge kind. Exact cloud hosts first,
 /// then a substring heuristic for self-hosted instances like
 /// `gitlab.mycompany.com`.
-pub fn detect_kind(host: &str, override_: Option<&str>) -> Result<ForgeKind, ForgeError> {
+fn detect_kind(host: &str, override_: Option<&str>) -> Result<ForgeKind, ForgeError> {
     match override_ {
         Some("github") => return Ok(ForgeKind::GitHub),
         Some("gitlab") => return Ok(ForgeKind::GitLab),
@@ -174,6 +176,12 @@ pub(crate) fn run_cli(
         return Err(ForgeError::CliFailed { cli, stderr: line });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// CLI argument lists are built as owned strings (formatted paths, body
+/// text); plain flags go through this.
+pub(crate) fn args(parts: &[&str]) -> Vec<String> {
+    parts.iter().map(ToString::to_string).collect()
 }
 
 /// Parse `--paginate` output: both CLIs emit each page's JSON array

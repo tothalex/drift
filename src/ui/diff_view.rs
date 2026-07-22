@@ -6,11 +6,15 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::App;
+use std::path::Path;
+
+use crate::app::{ActionSpot, App, Pane};
 use crate::processor::comments;
 use crate::processor::highlight::{HighlightSpan, TokenKind};
+use crate::processor::treesitter::lang_name;
 use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
+use crate::ui::{header_style, search_range};
 use crate::vcs::model::{DiffLine, LineKind};
 
 pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
@@ -18,14 +22,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
     // Per-language syntax overrides for the shown file, resolved once.
     let lang = app
         .current_file()
-        .and_then(|f| crate::processor::treesitter::lang_name(&f.path))
+        .and_then(|f| lang_name(&f.path))
         .and_then(|name| theme.for_lang(name));
     let title = app
         .current_file()
         .map(|f| f.path.display().to_string())
         .unwrap_or_else(|| "no changes".to_string());
 
-    let mut header_spans = vec![Span::raw(title)];
+    let title_style = header_style(theme, app.focused_pane() == Pane::Code);
+    let mut header_spans = vec![Span::styled(title, title_style)];
     if let Some(FileView::Sections {
         diffstat: (adds, dels),
         ..
@@ -49,6 +54,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
     // where the user acted.
     let action = app.action_spot().map(|(spot, frame)| (spot.clone(), frame));
     let current_path = app.current_file().map(|f| f.path.clone());
+    // The code pane's own search query highlights on every matching row.
+    let search = (!app.code_search().is_empty()).then(|| app.code_search().to_lowercase());
 
     // Scroll math first, so only the visible window of lines is ever
     // built — per-keystroke render cost is O(viewport), not O(file).
@@ -139,12 +146,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
                     }) => {
                         let sel = mouse_sel_range(mouse_sel, index, &line.content);
                         // Comment-only lines read as prose (flag
-                        // precomputed by the processor); added/removed
-                        // ones keep their diff gutter.
+                        // precomputed by the processor) and highlight
+                        // search hits within the prose; code lines get
+                        // the byte-exact renderer.
                         if sel.is_none() && *comment {
-                            render_comment_line(theme, line)
+                            render_comment_line(theme, line, search.as_deref())
                         } else {
-                            render_diff_line(theme, lang, line, spans, emph, sel)
+                            let hit = search
+                                .as_deref()
+                                .and_then(|query| search_range(&line.content, query));
+                            render_diff_line(theme, lang, line, spans, emph, sel, hit)
                         }
                     }
                 };
@@ -164,12 +175,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
 
 /// Does the in-flight mutation's spot land on this row? Diff lines also
 /// need the shown file to match — line numbers repeat across files.
-fn spot_marks(
-    spot: &crate::app::ActionSpot,
-    flat: &FlatLine,
-    path: Option<&std::path::Path>,
-) -> bool {
-    use crate::app::ActionSpot;
+fn spot_marks(spot: &ActionSpot, flat: &FlatLine, path: Option<&Path>) -> bool {
     match (spot, flat) {
         (
             ActionSpot::DiffLine { path: p, old, new },
@@ -255,8 +261,9 @@ fn render_comment_head(
 
 /// A comment-only line as prose: gutter (with the diff accent when the
 /// line was added/removed), original indent, a quote bar in place of the
-/// comment markers, and an amber review tag when it starts with one.
-fn render_comment_line(theme: &Theme, line: &DiffLine) -> Line<'static> {
+/// comment markers, and an amber review tag when it starts with one. A
+/// search hit highlights within the prose, keeping the prose rendering.
+fn render_comment_line(theme: &Theme, line: &DiffLine, query_lower: Option<&str>) -> Line<'static> {
     let prose = Style::default()
         .fg(theme.comment)
         .add_modifier(Modifier::ITALIC);
@@ -275,6 +282,15 @@ fn render_comment_line(theme: &Theme, line: &DiffLine) -> Line<'static> {
         Span::raw(indent),
         Span::styled("▏ ".to_string(), Style::default().fg(theme.comment)),
     ];
+    if let Some((start, end)) = query_lower.and_then(|query| search_range(text, query)) {
+        parts.push(Span::styled(text[..start].to_string(), prose));
+        parts.push(Span::styled(
+            text[start..end].to_string(),
+            prose.fg(theme.search).add_modifier(Modifier::BOLD),
+        ));
+        parts.push(Span::styled(text[end..].to_string(), prose));
+        return Line::from(parts);
+    }
     match comments::tag_len(text) {
         Some(tag) => {
             parts.push(Span::styled(
@@ -288,6 +304,7 @@ fn render_comment_line(theme: &Theme, line: &DiffLine) -> Line<'static> {
     Line::from(parts)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_diff_line(
     theme: &Theme,
     lang: Option<&HashMap<String, Color>>,
@@ -295,6 +312,7 @@ fn render_diff_line(
     spans: &[HighlightSpan],
     emph: &[(usize, usize)],
     sel: Option<(usize, usize)>,
+    search: Option<(usize, usize)>,
 ) -> Line<'static> {
     let (bar, accent, number) = gutter_parts(theme, line);
     let emph_bg = match line.kind {
@@ -316,6 +334,7 @@ fn render_diff_line(
         emph,
         emph_bg,
         sel,
+        search,
     ));
     Line::from(parts)
 }
@@ -330,8 +349,10 @@ fn gutter_parts(theme: &Theme, line: &DiffLine) -> (&'static str, Option<Color>,
     }
 }
 
-/// Split `content` into segments along both the syntax spans (foreground)
-/// and the emphasis ranges (background on the exact changed bytes).
+/// Split `content` into segments along the syntax spans (foreground),
+/// the emphasis ranges (background on the exact changed bytes), and the
+/// search hit (accented foreground).
+#[allow(clippy::too_many_arguments)]
 fn render_content(
     theme: &Theme,
     lang: Option<&HashMap<String, Color>>,
@@ -340,8 +361,9 @@ fn render_content(
     emph: &[(usize, usize)],
     emph_bg: Color,
     sel: Option<(usize, usize)>,
+    search: Option<(usize, usize)>,
 ) -> Vec<Span<'static>> {
-    let mut bounds: Vec<usize> = Vec::with_capacity(spans.len() * 2 + emph.len() * 2 + 4);
+    let mut bounds: Vec<usize> = Vec::with_capacity(spans.len() * 2 + emph.len() * 2 + 6);
     bounds.push(0);
     bounds.push(content.len());
     for span in spans {
@@ -352,9 +374,9 @@ fn render_content(
         bounds.push(start.min(content.len()));
         bounds.push(end.min(content.len()));
     }
-    if let Some((start, end)) = sel {
-        bounds.push(start.min(content.len()));
-        bounds.push(end.min(content.len()));
+    for range in [sel, search].into_iter().flatten() {
+        bounds.push(range.0.min(content.len()));
+        bounds.push(range.1.min(content.len()));
     }
     bounds.sort_unstable();
     bounds.dedup();
@@ -372,7 +394,11 @@ fn render_content(
         if emph.iter().any(|&(s, e)| s <= start && end <= e) {
             style = style.bg(emph_bg);
         }
-        // The mouse selection paints over everything else.
+        // The search hit overrides syntax color…
+        if search.is_some_and(|(s, e)| s <= start && end <= e) {
+            style = style.fg(theme.search).add_modifier(Modifier::BOLD);
+        }
+        // …and the mouse selection paints over everything else.
         if sel.is_some_and(|(s, e)| s <= start && end <= e) {
             style = style.bg(theme.select_bg);
         }

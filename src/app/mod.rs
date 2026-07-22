@@ -1,12 +1,14 @@
 //! The app coordinator: session state (VCS, files, current file), the
 //! event loop, and dispatch into the focused sub-states.
 //!
-//! Navigation is deliberately modeless: the tree is always the navigator,
-//! the single code view always scrolls. No window focus, no prefixes.
+//! Navigation is a light two-pane focus: `h`/`l` (or clicking) aim the
+//! cursor keys at the file tree or the code view. Everything else stays
+//! global — no modes, no prefixes.
 
 pub mod code_view;
 pub mod compose;
 pub mod panes;
+pub mod picker;
 pub mod pr;
 pub mod review;
 pub mod tree_nav;
@@ -28,70 +30,75 @@ use ratatui::layout::Position;
 
 use crate::config::Config;
 use crate::events::{
-    AppEvent, INPUT_POLL_MS, pop_keyboard_enhancement, push_keyboard_enhancement,
-    spawn_input_thread, spawn_watcher_thread,
+    AppEvent, INPUT_POLL_MS, RefreshedComments, pop_keyboard_enhancement,
+    push_keyboard_enhancement, spawn_input_thread, spawn_watcher_thread,
 };
-use crate::forge::model::{Anchor, ComposeTarget, PrData, PullRequest, Side};
+use crate::forge::model::{Anchor, ComposeTarget, PrData, PrDetail, PullRequest, Side};
 use crate::forge::{self, Forge, ForgeConfig, ForgeError};
 use crate::keymap::{Action, Keymap};
 use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
 use crate::ui::CODE_GUTTER;
-use crate::vcs::Vcs;
-use crate::vcs::model::{ChangedFile, Comparison, Scope};
+use crate::vcs::model::{ChangedFile, Comparison, LineKind, Scope};
+use crate::vcs::{self, Vcs};
 
 use code_view::{CodeView, TextPos};
 use compose::Compose;
 use panes::PaneLayout;
+use picker::pr_label;
+pub use picker::{BasePicker, Picker, PrPicker, ScopePicker};
 use pr::PrSession;
 use review::Review;
 use tree_nav::TreeNav;
 use view_cache::ViewCache;
 
-/// The base-branch picker overlay: branch list and its cursor.
-pub struct BasePicker {
-    pub branches: Vec<String>,
-    pub cursor: usize,
+/// Which pane the cursor keys act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Tree,
+    Code,
 }
 
-/// The scope picker overlay that follows a branch choice: review
-/// everything, only untracked files, or one commit.
-pub struct ScopePicker {
-    pub entries: Vec<(Scope, String)>,
-    pub cursor: usize,
+/// Live-reload bookkeeping: paths the watcher flagged since the last
+/// applied refresh (their views are stale), whether git metadata moved
+/// (the comparison itself may be stale), and the background status-scan
+/// sequencing — results carry the sequence they were started with,
+/// stale ones are dropped.
+#[derive(Default)]
+struct ScanState {
+    dirty_paths: HashSet<PathBuf>,
+    meta_pending: bool,
+    seq: u64,
+    inflight: bool,
+    /// Events arrived while a scan was running: go again when it lands.
+    rescan_needed: bool,
 }
 
-/// The pull-request picker overlay: open PRs/MRs fetched from the forge.
-pub struct PrPicker {
-    /// Panel title, e.g. "open pull requests".
-    pub title: String,
-    /// Display rows: (label, is the currently open PR). With `back` set,
-    /// row 0 is "← back to local changes" and `items[i]` maps to
-    /// `rows[i + 1]`.
-    pub rows: Vec<(String, bool)>,
-    pub items: Vec<PullRequest>,
-    pub back: bool,
-    pub cursor: usize,
-}
-
-/// Whichever picker overlay is open.
-pub enum Picker {
-    Base(BasePicker),
-    Scope(ScopePicker),
-    Pr(PrPicker),
-}
-
-impl Picker {
-    fn move_cursor(&mut self, delta: isize) {
-        let (cursor, len) = match self {
-            Picker::Base(picker) => (&mut picker.cursor, picker.branches.len()),
-            Picker::Scope(picker) => (&mut picker.cursor, picker.entries.len()),
-            Picker::Pr(picker) => (&mut picker.cursor, picker.rows.len()),
-        };
-        *cursor = cursor
-            .saturating_add_signed(delta)
-            .min(len.saturating_sub(1));
+impl ScanState {
+    /// A manual reload/refresh supersedes any in-flight live refresh.
+    fn cancel(&mut self) {
+        self.seq += 1;
+        self.inflight = false;
+        self.rescan_needed = false;
+        self.meta_pending = false;
+        self.dirty_paths.clear();
     }
+
+    fn next_seq(&mut self) -> u64 {
+        self.seq += 1;
+        self.seq
+    }
+}
+
+/// One in-flight forge request: everything about the wait, cleared as a
+/// unit when its response (matched by `seq`) lands.
+struct ForgeRequest {
+    seq: u64,
+    /// Where in the code view the mutation acts — the spinner renders on
+    /// that row, where the user is looking. `None` for list/load waits.
+    spot: Option<ActionSpot>,
+    /// Status-bar text for when the request lands ("comment posted", …).
+    done_notice: String,
 }
 
 /// The code-view row an in-flight forge mutation targets; the renderer
@@ -126,15 +133,20 @@ pub struct App {
     /// The file whose diff is shown — stays put while the cursor is on a
     /// directory row.
     current: Option<usize>,
+    /// The pane the cursor keys act on (`h`/`l` or a click switch it).
+    focus: Pane,
     /// The `?` keybinding overlay is open; any key closes it.
     help_open: bool,
     /// The open picker overlay (base branch or review scope), if any.
     picker: Option<Picker>,
     /// Vim-style count prefix: typed digits repeat the next motion.
     count: Option<usize>,
-    /// Tree search: the query (highlights persist until Esc)…
-    search_query: String,
-    /// …and whether `/` input mode is capturing keystrokes.
+    /// Search: one independent query per pane (highlights persist until
+    /// Esc or `q`)…
+    search_tree: String,
+    search_code: String,
+    /// …and whether `/` input mode is capturing keystrokes — it edits
+    /// the focused pane's query; `n`/`N` always follow the focus.
     search_input: bool,
     /// One-shot status message ("yanked 3 lines"); cleared on next key.
     notice: Option<String>,
@@ -144,32 +156,23 @@ pub struct App {
     /// Bumped whenever cached views become stale; prefetch results from
     /// older generations are discarded on arrival.
     generation: u64,
-    /// Live reload: paths the watcher flagged since the last applied
-    /// refresh (their views are stale)…
-    dirty_paths: HashSet<PathBuf>,
-    /// …whether git metadata moved (the comparison itself may be stale)…
-    meta_pending: bool,
-    /// …and the background status-scan bookkeeping: results carry the
-    /// sequence they were started with, stale ones are dropped.
-    scan_seq: u64,
-    scan_inflight: bool,
-    /// Events arrived while a scan was running: go again when it lands.
-    rescan_needed: bool,
+    /// Live-reload bookkeeping: what the watcher flagged and where the
+    /// background status scan stands.
+    scan: ScanState,
     /// Forge integration: the `[forge]` config, the lazily-detected forge
     /// (shared with background fetch threads), and the staleness counter
     /// for forge results (stale sequences are dropped on arrival).
     forge_config: ForgeConfig,
     forge: Option<Arc<dyn Forge>>,
     forge_seq: u64,
-    /// A forge request is being waited on: the status bar animates a
-    /// spinner, driven by a ticker thread that only lives while this is
-    /// set (`spinner_running` is the thread's own kill switch).
-    forge_inflight: bool,
+    /// The forge request being waited on, if any: its staleness sequence,
+    /// where in the code view it acts, and the success notice. One value,
+    /// so nothing clears half of it. The spinner animates while set,
+    /// driven by a ticker thread that only lives that long
+    /// (`spinner_running` is the thread's own kill switch).
+    forge_request: Option<ForgeRequest>,
     spinner: usize,
     spinner_running: Arc<AtomicBool>,
-    /// Where in the code view the in-flight mutation acts — the spinner
-    /// renders on that row, where the user is looking.
-    forge_spot: Option<ActionSpot>,
     /// The open pull-request session, if any; while set, files and views
     /// come from the forge data instead of the working tree.
     pr: Option<PrSession>,
@@ -187,9 +190,6 @@ pub struct App {
     /// Deleting a comment takes `d` twice: the id armed by the first
     /// press. Any other key disarms.
     pending_delete: Option<String>,
-    /// Status-bar text for when the in-flight forge mutation lands
-    /// ("comment posted", "comment deleted", …).
-    forge_done_notice: String,
     /// The terminal disambiguates modified keys (kitty protocol), so
     /// shift+enter is distinguishable from enter in the composer.
     keyboard_enhanced: bool,
@@ -212,34 +212,30 @@ impl App {
             cache: ViewCache::new(),
             review: Review::default(),
             current: None,
+            focus: Pane::Tree,
             help_open: false,
             picker: None,
             count: None,
-            search_query: String::new(),
+            search_tree: String::new(),
+            search_code: String::new(),
             search_input: false,
             notice: None,
             events_tx,
             events_rx,
             generation: 0,
-            dirty_paths: HashSet::new(),
-            meta_pending: false,
-            scan_seq: 0,
-            scan_inflight: false,
-            rescan_needed: false,
+            scan: ScanState::default(),
             forge_config: config.forge,
             forge: None,
             forge_seq: 0,
-            forge_inflight: false,
+            forge_request: None,
             spinner: 0,
             spinner_running: Arc::new(AtomicBool::new(false)),
-            forge_spot: None,
             pr: None,
             editor: config.editor,
             input_paused: Arc::new(AtomicBool::new(false)),
             pending_editor: None,
             compose: None,
             pending_delete: None,
-            forge_done_notice: String::new(),
             keyboard_enhanced: false,
             quit: false,
         };
@@ -261,6 +257,11 @@ impl App {
 
     pub fn help_open(&self) -> bool {
         self.help_open
+    }
+
+    /// The pane the cursor keys act on; its header lights up.
+    pub fn focused_pane(&self) -> Pane {
+        self.focus
     }
 
     pub fn picker(&self) -> Option<&Picker> {
@@ -286,21 +287,24 @@ impl App {
     /// The spinner frame to show while a forge request is in flight.
     pub fn spinner_frame(&self) -> Option<&'static str> {
         const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        self.forge_inflight
+        self.forge_request
+            .is_some()
             .then(|| FRAMES[self.spinner % FRAMES.len()])
     }
 
     /// The code-view row the in-flight mutation targets, with the current
     /// spinner frame — the diff renderer marks that row.
     pub fn action_spot(&self) -> Option<(&ActionSpot, &'static str)> {
-        Some((self.forge_spot.as_ref()?, self.spinner_frame()?))
+        Some((
+            self.forge_request.as_ref()?.spot.as_ref()?,
+            self.spinner_frame()?,
+        ))
     }
 
-    /// A forge request just started: show the spinner and make sure a
-    /// ticker thread is animating it (one at a time; it exits by itself
-    /// once nothing is in flight).
+    /// A forge request just started: make sure a ticker thread is
+    /// animating the spinner (one at a time; it exits by itself once
+    /// nothing is in flight).
     fn start_spinner(&mut self) {
-        self.forge_inflight = true;
         if self.spinner_running.swap(true, Ordering::Relaxed) {
             return; // already ticking
         }
@@ -369,8 +373,29 @@ impl App {
         self.notice.as_deref()
     }
 
+    /// The focused pane's search query (what `/` edits and `n` follows).
     pub fn search_query(&self) -> &str {
-        &self.search_query
+        match self.focus {
+            Pane::Tree => &self.search_tree,
+            Pane::Code => &self.search_code,
+        }
+    }
+
+    fn search_query_mut(&mut self) -> &mut String {
+        match self.focus {
+            Pane::Tree => &mut self.search_tree,
+            Pane::Code => &mut self.search_code,
+        }
+    }
+
+    /// The tree's own query — highlighted in the file list.
+    pub fn tree_search(&self) -> &str {
+        &self.search_tree
+    }
+
+    /// The code view's own query — highlighted in the diff.
+    pub fn code_search(&self) -> &str {
+        &self.search_code
     }
 
     pub fn search_input(&self) -> bool {
@@ -392,9 +417,40 @@ impl App {
         self.current_view().map_or(0, FileView::flat_len)
     }
 
+    /// Visible rows of the tree / code panes, for cursor clamping.
+    fn tree_viewport(&self) -> usize {
+        self.layout.tree_area.height as usize
+    }
+
+    fn code_viewport(&self) -> usize {
+        self.layout.code_area.height as usize
+    }
+
+    /// The flattened view row under the code cursor.
+    fn line_at_cursor(&self) -> Option<FlatLine<'_>> {
+        self.current_view()?.flat_lines().nth(self.code.cursor)
+    }
+
+    /// UI copy: "pull request" or "merge request", once a forge is known.
+    fn noun(&self) -> &'static str {
+        self.forge
+            .as_ref()
+            .map_or("pull request", |forge| forge.pr_noun())
+    }
+
+    /// Where the reviewer is, for restoring after the file list moves:
+    /// the shown file's path and the new-side line under the cursor.
+    fn current_anchor(&self) -> (Option<PathBuf>, Option<u32>) {
+        let path = self.current_file().map(|f| f.path.clone());
+        let lineno = self
+            .current_view()
+            .and_then(|view| view.lineno_at(self.code.cursor));
+        (path, lineno)
+    }
+
     /// Called by the renderer once geometry is known.
     pub fn apply_pending_center(&mut self) {
-        let viewport = self.layout.code_area.height as usize;
+        let viewport = self.code_viewport();
         let len = self.view_len();
         self.code.apply_pending_center(viewport, len);
     }
@@ -433,7 +489,10 @@ impl App {
                     }
                     Ok(())
                 }
-                AppEvent::FsChanged { paths, meta } => self.on_fs_changed(paths, meta),
+                AppEvent::FsChanged { paths, meta } => {
+                    self.on_fs_changed(paths, meta);
+                    Ok(())
+                }
                 AppEvent::StatusReady { seq, result } => self.on_status_ready(seq, result),
                 AppEvent::PrListReady { seq, result } => {
                     self.on_pr_list_ready(seq, result);
@@ -442,7 +501,7 @@ impl App {
                 AppEvent::PrReady { seq, result } => self.on_pr_ready(seq, result),
                 AppEvent::PrPosted { seq, result } => self.on_pr_posted(seq, result),
                 AppEvent::Tick => {
-                    if self.forge_inflight {
+                    if self.forge_request.is_some() {
                         self.spinner = self.spinner.wrapping_add(1);
                     } else {
                         // The wait ended: let the ticker thread die.
@@ -520,15 +579,15 @@ impl App {
                 }
                 KeyCode::Esc => {
                     self.search_input = false;
-                    self.search_query.clear();
+                    self.search_query_mut().clear();
                 }
                 KeyCode::Enter => self.search_input = false,
                 KeyCode::Backspace => {
-                    self.search_query.pop();
+                    self.search_query_mut().pop();
                     self.jump_to_first_match()?;
                 }
                 KeyCode::Char(c) => {
-                    self.search_query.push(c);
+                    self.search_query_mut().push(c);
                     self.jump_to_first_match()?;
                 }
                 _ => {}
@@ -552,7 +611,8 @@ impl App {
         // never quits.
         if key.code == KeyCode::Esc {
             self.code.select_anchor = None;
-            self.search_query.clear();
+            self.search_tree.clear();
+            self.search_code.clear();
             return Ok(());
         }
         // Comment rows carry a fixed micro-map (like the picker): the
@@ -560,35 +620,45 @@ impl App {
         // under the cursor, shadowing the global bindings there. A
         // pending delete survives exactly one keypress.
         let pending_delete = self.pending_delete.take();
-        if self.pr.is_some() && self.handle_comment_key(key.code, pending_delete) {
+        if self.pr.is_some()
+            && self.focus == Pane::Code
+            && self.handle_comment_key(key.code, pending_delete)
+        {
             return Ok(());
         }
         let Some(action) = self.keymap.action_for(key.code, key.modifiers) else {
             return Ok(());
         };
-        let view_len = self.view_len();
         match action {
             // In visual mode `q` leaves the mode, like Esc — it must not
             // quit the app mid-selection.
             Action::Quit if self.code.select_anchor.is_some() => {
                 self.code.select_anchor = None;
             }
+            // Likewise with search highlights active: `q` steps back to
+            // normal instead of quitting.
+            Action::Quit if !self.search_tree.is_empty() || !self.search_code.is_empty() => {
+                self.search_tree.clear();
+                self.search_code.clear();
+            }
             Action::Quit => self.quit = true,
             Action::Help => self.help_open = true,
+            Action::FocusTree => self.focus = Pane::Tree,
+            Action::FocusCode => self.focus = Pane::Code,
             Action::NextFile => self.move_file(count)?,
             Action::PrevFile => self.move_file(-count)?,
             Action::ToggleDir => self.nav.toggle_dir(),
-            Action::CursorDown => self.code.move_cursor(count, view_len),
-            Action::CursorUp => self.code.move_cursor(-count, view_len),
-            Action::JumpDown => self.code.move_cursor(15 * count, view_len),
-            Action::JumpUp => self.code.move_cursor(-15 * count, view_len),
+            Action::CursorDown => self.move_focused(count)?,
+            Action::CursorUp => self.move_focused(-count)?,
+            Action::JumpDown => self.move_focused(15 * count)?,
+            Action::JumpUp => self.move_focused(-15 * count)?,
             Action::JumpTop => {
                 let target = if explicit_count {
                     count as usize - 1
                 } else {
                     0
                 };
-                self.code.jump(target, view_len);
+                self.jump_focused(target)?;
             }
             Action::JumpBottom => {
                 let target = if explicit_count {
@@ -596,12 +666,12 @@ impl App {
                 } else {
                     usize::MAX
                 };
-                self.code.jump(target, view_len);
+                self.jump_focused(target)?;
             }
             Action::ScopeWiden => self.adjust_scope(count)?,
             Action::ScopeNarrow => self.adjust_scope(-count)?,
             Action::Search => {
-                self.search_query.clear();
+                self.search_query_mut().clear();
                 self.search_input = true;
             }
             Action::NextMatch => self.jump_match(1)?,
@@ -631,7 +701,7 @@ impl App {
             Action::CommentGeneral => self.request_comment(true),
             Action::Refresh => match self.pr.as_ref().map(|s| s.data.detail.number) {
                 Some(number) => self.open_pr(number),
-                None => self.reload()?,
+                None => self.refresh()?,
             },
             Action::OpenEditor => self.request_editor(),
         }
@@ -683,7 +753,7 @@ impl App {
                 Some(Picker::Base(picker)) => {
                     let base = picker.branches[picker.cursor].clone();
                     if self.set_base(&base)? {
-                        self.open_scope_picker()?;
+                        self.open_scope_picker();
                     }
                 }
                 Some(Picker::Scope(picker)) => {
@@ -720,7 +790,7 @@ impl App {
         Ok(())
     }
 
-    fn open_scope_picker(&mut self) -> Result<()> {
+    fn open_scope_picker(&mut self) {
         let commits = match self.vcs.commits(&self.cmp) {
             Ok(commits) => commits,
             Err(err) => {
@@ -741,7 +811,6 @@ impl App {
             .position(|(scope, _)| *scope == self.cmp.scope)
             .unwrap_or(0);
         self.picker = Some(Picker::Scope(ScopePicker { entries, cursor }));
-        Ok(())
     }
 
     // --- pull-request integration ---
@@ -760,23 +829,40 @@ impl App {
         Ok(forge)
     }
 
-    /// List open pull requests off the main thread and open the picker
-    /// when they arrive; errors (CLI missing, unauthenticated, unknown
-    /// forge) land in the status bar.
-    fn open_pr_picker(&mut self) {
+    /// Start a forge request: bump the staleness sequence, record the
+    /// wait as one value, and animate the spinner. Returns what the
+    /// background thread needs — or `None` with the error already in the
+    /// status bar when no forge is available.
+    fn begin_forge_request(
+        &mut self,
+        spot: Option<ActionSpot>,
+        done_notice: &str,
+    ) -> Option<(Arc<dyn Forge>, u64, Sender<AppEvent>)> {
         let forge = match self.forge() {
             Ok(forge) => forge,
             Err(err) => {
                 self.notice = Some(err);
-                return;
+                return None;
             }
         };
         self.forge_seq += 1;
-        let seq = self.forge_seq;
-        self.notice = Some(format!("loading {}s…", forge.pr_noun()));
-        self.forge_spot = None; // list/load waits have no code-view spot
+        self.forge_request = Some(ForgeRequest {
+            seq: self.forge_seq,
+            spot,
+            done_notice: done_notice.to_string(),
+        });
         self.start_spinner();
-        let tx = self.events_tx.clone();
+        Some((forge, self.forge_seq, self.events_tx.clone()))
+    }
+
+    /// List open pull requests off the main thread and open the picker
+    /// when they arrive; errors (CLI missing, unauthenticated, unknown
+    /// forge) land in the status bar.
+    fn open_pr_picker(&mut self) {
+        let Some((forge, seq, tx)) = self.begin_forge_request(None, "") else {
+            return;
+        };
+        self.notice = Some(format!("loading {}s…", forge.pr_noun()));
         std::thread::spawn(move || {
             let result = forge.list_open().map_err(|err| err.to_string());
             let _ = tx.send(AppEvent::PrListReady { seq, result });
@@ -784,14 +870,11 @@ impl App {
     }
 
     fn on_pr_list_ready(&mut self, seq: u64, result: Result<Vec<PullRequest>, String>) {
-        if seq != self.forge_seq {
+        if self.forge_request.as_ref().is_none_or(|r| r.seq != seq) {
             return; // superseded by a newer forge request
         }
-        self.forge_inflight = false;
-        let noun = self
-            .forge
-            .as_ref()
-            .map_or("pull request", |forge| forge.pr_noun());
+        self.forge_request = None;
+        let noun = self.noun();
         match result {
             Ok(items) if items.is_empty() && self.pr.is_none() => {
                 self.notice = Some(format!("no open {noun}s"));
@@ -826,19 +909,10 @@ impl App {
     /// Load one pull request — detail, diffs, comments — off the main
     /// thread; [`AppEvent::PrReady`] lands in [`Self::on_pr_ready`].
     fn open_pr(&mut self, number: u64) {
-        let forge = match self.forge() {
-            Ok(forge) => forge,
-            Err(err) => {
-                self.notice = Some(err);
-                return;
-            }
+        let Some((forge, seq, tx)) = self.begin_forge_request(None, "") else {
+            return;
         };
-        self.forge_seq += 1;
-        let seq = self.forge_seq;
         self.notice = Some(format!("loading {} #{number}…", forge.pr_noun()));
-        self.forge_spot = None; // list/load waits have no code-view spot
-        self.start_spinner();
-        let tx = self.events_tx.clone();
         std::thread::spawn(move || {
             let result = forge
                 .load(number)
@@ -849,10 +923,10 @@ impl App {
     }
 
     fn on_pr_ready(&mut self, seq: u64, result: Result<Box<PrData>, String>) -> Result<()> {
-        if seq != self.forge_seq {
+        if self.forge_request.as_ref().is_none_or(|r| r.seq != seq) {
             return Ok(()); // superseded by a newer forge request
         }
-        self.forge_inflight = false;
+        self.forge_request = None;
         match result {
             Ok(data) => {
                 self.notice = None;
@@ -879,13 +953,7 @@ impl App {
             _ => HashSet::new(),
         };
         // Anchors, taken before anything moves.
-        let current_path = self
-            .current
-            .and_then(|i| self.files.get(i))
-            .map(|f| f.path.clone());
-        let lineno = self
-            .current_view()
-            .and_then(|view| view.lineno_at(self.code.cursor));
+        let (current_path, lineno) = self.current_anchor();
         self.pr = Some(PrSession { data, collapsed });
         let session = self.pr.as_ref().expect("just set");
         let mut files = vec![pr::conversation_entry()];
@@ -900,34 +968,12 @@ impl App {
             self.start_prefetch();
             return Ok(());
         }
-        // Same refresh contract as a local live reload: the tree keeps
-        // its cursor and collapsed dirs, the shown file stays shown, and
-        // its code cursor re-anchors by line number.
+        // Same refresh contract as a local refresh: the tree keeps its
+        // cursor and collapsed dirs, the shown file stays shown, and its
+        // code cursor re-anchors by line number.
         self.nav
-            .rebuild_preserving(&self.files, self.layout.tree_area.height as usize);
-        self.current = current_path
-            .as_ref()
-            .and_then(|path| self.files.iter().position(|f| f.path == *path));
-        match self.current {
-            Some(index) => {
-                self.ensure_view(index)?;
-                if let Some(view) = self.current_view() {
-                    let last = view.flat_len().saturating_sub(1);
-                    self.code.cursor = lineno
-                        .and_then(|lineno| view.row_of_lineno(lineno))
-                        .unwrap_or(self.code.cursor)
-                        .min(last);
-                    // Selections spanned content that may be gone.
-                    self.code.select_anchor = None;
-                    self.code.mouse_sel = None;
-                }
-            }
-            None => {
-                // The shown file left the PR; fall back to the tree cursor.
-                self.code.reset_for_new_view();
-                self.sync_current()?;
-            }
-        }
+            .rebuild_preserving(&self.files, self.tree_viewport());
+        self.restore_place(current_path, lineno)?;
         self.start_prefetch();
         Ok(())
     }
@@ -945,8 +991,7 @@ impl App {
     /// The review thread under the code cursor, if it sits on one of a
     /// thread's rows (heads and bodies carry their forge-side key).
     fn thread_key_at_cursor(&self) -> Option<String> {
-        let view = self.current_view()?;
-        match view.flat_lines().nth(self.code.cursor)? {
+        match self.line_at_cursor()? {
             FlatLine::Line(
                 ViewLine::CommentHead { key, .. }
                 | ViewLine::CommentBody { key, .. }
@@ -989,8 +1034,7 @@ impl App {
     /// target must be exactly what the cursor is on (the hint row is
     /// thread-scoped and refuses, pointing at the comment instead).
     fn comment_at_cursor(&self) -> Option<(String, bool)> {
-        let view = self.current_view()?;
-        match view.flat_lines().nth(self.code.cursor)? {
+        match self.line_at_cursor()? {
             FlatLine::Line(
                 ViewLine::CommentHead { id, key, .. } | ViewLine::CommentBody { id, key, .. },
             ) if !id.is_empty() => Some((id.clone(), !key.is_empty())),
@@ -1015,11 +1059,8 @@ impl App {
     /// On these the comment micro-map consumes its keys even when they
     /// can't act, so `d`/`r` never fall back to jump/refresh mid-thread.
     fn on_comment_row(&self) -> bool {
-        let Some(view) = self.current_view() else {
-            return false;
-        };
         matches!(
-            view.flat_lines().nth(self.code.cursor),
+            self.line_at_cursor(),
             Some(FlatLine::Line(
                 ViewLine::CommentHead { .. }
                     | ViewLine::CommentBody { .. }
@@ -1179,8 +1220,7 @@ impl App {
     /// not fire one by surprise), a diff line a new inline comment, the
     /// conversation view a general comment.
     fn compose_target_at_cursor(&self) -> Option<ComposeTarget> {
-        if let Some(FlatLine::Line(ViewLine::CommentHint { key, .. })) =
-            self.current_view()?.flat_lines().nth(self.code.cursor)
+        if let Some(FlatLine::Line(ViewLine::CommentHint { key, .. })) = self.line_at_cursor()
             && !key.is_empty()
         {
             return Some(ComposeTarget::Reply {
@@ -1194,7 +1234,7 @@ impl App {
         if pr::is_conversation(file) {
             return Some(ComposeTarget::General);
         }
-        match self.current_view()?.flat_lines().nth(self.code.cursor)? {
+        match self.line_at_cursor()? {
             FlatLine::Line(ViewLine::Diff { line, .. }) => Some(ComposeTarget::Inline {
                 anchor: Anchor {
                     path: file.path.clone(),
@@ -1217,10 +1257,7 @@ impl App {
         let session = self.pr.as_ref();
         match target {
             ComposeTarget::General => {
-                let noun = self
-                    .forge
-                    .as_ref()
-                    .map_or("pull request", |forge| forge.pr_noun());
+                let noun = self.noun();
                 let number = session.map_or(0, |s| s.data.detail.number);
                 format!("comment on {noun} #{number}")
             }
@@ -1244,28 +1281,16 @@ impl App {
     /// mutation acts on — the spinner renders there while waiting.
     fn run_forge_mutation<F>(&mut self, working: &str, done: &str, spot: Option<ActionSpot>, op: F)
     where
-        F: FnOnce(&dyn Forge, &crate::forge::model::PrDetail) -> Result<(), ForgeError>
-            + Send
-            + 'static,
+        F: FnOnce(&dyn Forge, &PrDetail) -> Result<(), ForgeError> + Send + 'static,
     {
         let Some(session) = &self.pr else {
             return;
         };
         let data = Arc::clone(&session.data);
-        let forge = match self.forge() {
-            Ok(forge) => forge,
-            Err(err) => {
-                self.notice = Some(err);
-                return;
-            }
+        let Some((forge, seq, tx)) = self.begin_forge_request(spot, done) else {
+            return;
         };
-        self.forge_seq += 1;
-        let seq = self.forge_seq;
         self.notice = Some(working.to_string());
-        self.forge_done_notice = done.to_string();
-        self.forge_spot = spot;
-        self.start_spinner();
-        let tx = self.events_tx.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<_, ForgeError> {
                 let detail = &data.detail;
@@ -1305,16 +1330,15 @@ impl App {
 
     /// A comment landed (or failed): swap in the refetched threads and
     /// recompute views without losing the reviewer's place.
-    fn on_pr_posted(
-        &mut self,
-        seq: u64,
-        result: Result<crate::events::RefreshedComments, String>,
-    ) -> Result<()> {
-        if seq != self.forge_seq {
-            return Ok(());
+    fn on_pr_posted(&mut self, seq: u64, result: Result<RefreshedComments, String>) -> Result<()> {
+        if self.forge_request.as_ref().is_none_or(|r| r.seq != seq) {
+            return Ok(()); // superseded by a newer forge request
         }
-        self.forge_inflight = false;
-        self.forge_spot = None;
+        let done_notice = self
+            .forge_request
+            .take()
+            .map(|request| request.done_notice)
+            .unwrap_or_default();
         let refreshed = match result {
             Ok(refreshed) => refreshed,
             Err(err) => {
@@ -1330,22 +1354,11 @@ impl App {
         data.threads = threads;
         data.conversation = conversation;
         session.data = Arc::new(data);
-        self.notice = Some(std::mem::take(&mut self.forge_done_notice));
+        self.notice = Some(done_notice);
         // Threads may touch any file: recompute, keeping the cursor's line.
-        let anchor = self
-            .current_view()
-            .and_then(|view| view.lineno_at(self.code.cursor));
+        let (current_path, lineno) = self.current_anchor();
         self.cache.reset();
-        if let Some(index) = self.current {
-            self.ensure_view(index)?;
-        }
-        if let Some(view) = self.current_view() {
-            let last = view.flat_len().saturating_sub(1);
-            self.code.cursor = anchor
-                .and_then(|lineno| view.row_of_lineno(lineno))
-                .unwrap_or(self.code.cursor)
-                .min(last);
-        }
+        self.restore_place(current_path, lineno)?;
         self.start_prefetch();
         Ok(())
     }
@@ -1389,8 +1402,8 @@ impl App {
         let position = Position::new(mouse.column, mouse.row);
         let in_tree = self.layout.tree_area.contains(position);
         let in_code = self.layout.code_area.contains(position);
-        let tree_viewport = self.layout.tree_area.height as usize;
-        let code_viewport = self.layout.code_area.height as usize;
+        let tree_viewport = self.tree_viewport();
+        let code_viewport = self.code_viewport();
         match mouse.kind {
             // The comparison segment at the status bar's left edge opens
             // the picker, mirroring the pick_base key (or, in a PR
@@ -1420,6 +1433,7 @@ impl App {
                 self.code.scroll_view(-3, code_viewport, self.view_len());
             }
             MouseEventKind::Down(MouseButton::Left) if in_tree => {
+                self.focus = Pane::Tree;
                 let row = (mouse.row - self.layout.tree_area.y) as usize + self.nav.offset();
                 if row < self.nav.tree.visible_len() {
                     self.nav.set_cursor(row, tree_viewport);
@@ -1431,6 +1445,7 @@ impl App {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) if in_code => {
+                self.focus = Pane::Code;
                 let at = self.position_to_text(position);
                 self.code.mouse_sel = Some((at, at));
             }
@@ -1450,8 +1465,42 @@ impl App {
 
     // --- file navigation & review flow ---
 
+    /// `j`/`k` (and `d`/`u`): move the cursor of whichever pane has
+    /// focus. In the tree the shown diff follows the cursor, as always.
+    fn move_focused(&mut self, delta: isize) -> Result<()> {
+        match self.focus {
+            Pane::Tree => {
+                let viewport = self.tree_viewport();
+                self.nav.move_cursor(delta, viewport, |_| false);
+                self.sync_current()?;
+            }
+            Pane::Code => {
+                let len = self.view_len();
+                self.code.move_cursor(delta, len);
+            }
+        }
+        Ok(())
+    }
+
+    /// `g`/`G` (with an optional count): jump within the focused pane.
+    fn jump_focused(&mut self, target: usize) -> Result<()> {
+        match self.focus {
+            Pane::Tree => {
+                let viewport = self.tree_viewport();
+                let last = self.nav.tree.visible_len().saturating_sub(1);
+                self.nav.set_cursor(target.min(last), viewport);
+                self.sync_current()?;
+            }
+            Pane::Code => {
+                let len = self.view_len();
+                self.code.jump(target, len);
+            }
+        }
+        Ok(())
+    }
+
     fn move_file(&mut self, delta: isize) -> Result<()> {
-        let viewport = self.layout.tree_area.height as usize;
+        let viewport = self.tree_viewport();
         let files = &self.files;
         let review = &self.review;
         let skip = |file_index: usize| {
@@ -1463,12 +1512,12 @@ impl App {
         self.sync_current()
     }
 
-    /// Visible tree rows whose label contains the search query.
+    /// Visible tree rows whose label contains the tree's query.
     fn match_rows(&self) -> Vec<usize> {
-        if self.search_query.is_empty() {
+        if self.search_tree.is_empty() {
             return Vec::new();
         }
-        let query = self.search_query.to_lowercase();
+        let query = self.search_tree.to_lowercase();
         self.nav
             .tree
             .rows()
@@ -1478,35 +1527,105 @@ impl App {
             .collect()
     }
 
+    /// Rows where a change run (contiguous added/removed lines) starts —
+    /// what `n`/`N` hop between when no code search is active.
+    fn change_rows(&self) -> Vec<usize> {
+        let Some(view) = self.current_view() else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        let mut in_change = false;
+        for (row, flat) in view.flat_lines().enumerate() {
+            let changed = matches!(
+                flat,
+                FlatLine::Line(ViewLine::Diff { line, .. }) if line.kind != LineKind::Context
+            );
+            if changed && !in_change {
+                rows.push(row);
+            }
+            in_change = changed;
+        }
+        rows
+    }
+
+    /// Rows of the shown view whose content contains the code query.
+    fn code_match_rows(&self) -> Vec<usize> {
+        if self.search_code.is_empty() {
+            return Vec::new();
+        }
+        let Some(view) = self.current_view() else {
+            return Vec::new();
+        };
+        let query = self.search_code.to_lowercase();
+        view.flat_lines()
+            .enumerate()
+            .filter(|(_, flat)| {
+                flat.content()
+                    .is_some_and(|content| content.to_lowercase().contains(&query))
+            })
+            .map(|(row, _)| row)
+            .collect()
+    }
+
     fn jump_to_first_match(&mut self) -> Result<()> {
-        if let Some(&row) = self.match_rows().first() {
-            self.nav
-                .set_cursor(row, self.layout.tree_area.height as usize);
-            self.sync_current()?;
+        match self.focus {
+            Pane::Tree => {
+                if let Some(&row) = self.match_rows().first() {
+                    self.nav.set_cursor(row, self.tree_viewport());
+                    self.sync_current()?;
+                }
+            }
+            Pane::Code => {
+                if let Some(&row) = self.code_match_rows().first() {
+                    let len = self.view_len();
+                    self.code.jump(row, len);
+                }
+            }
         }
         Ok(())
     }
 
-    /// `n`/`N`: cycle through search matches, wrapping around.
+    /// `n`/`N`: cycle through the focused pane's search matches (each
+    /// pane keeps its own query), wrapping around. In the code pane
+    /// without a search they hop between the changes themselves.
     fn jump_match(&mut self, direction: isize) -> Result<()> {
-        let rows = self.match_rows();
+        let rows = match self.focus {
+            Pane::Tree => self.match_rows(),
+            Pane::Code if self.search_code.is_empty() => self.change_rows(),
+            Pane::Code => self.code_match_rows(),
+        };
         if rows.is_empty() {
-            self.notice = Some(match self.search_query.is_empty() {
-                true => "no search — press / first".to_string(),
-                false => format!("no matches for '{}'", self.search_query),
+            self.notice = Some(match self.focus {
+                Pane::Tree if self.search_tree.is_empty() => {
+                    "no search here — press / first".to_string()
+                }
+                Pane::Code if self.search_code.is_empty() => {
+                    "no changes to jump between".to_string()
+                }
+                _ => format!("no matches for '{}'", self.search_query()),
             });
             return Ok(());
         }
-        let cursor = self.nav.cursor;
+        let cursor = match self.focus {
+            Pane::Tree => self.nav.cursor,
+            Pane::Code => self.code.cursor,
+        };
         let target = if direction > 0 {
             rows.iter().find(|&&row| row > cursor).or(rows.first())
         } else {
             rows.iter().rev().find(|&&row| row < cursor).or(rows.last())
         };
         if let Some(&row) = target {
-            self.nav
-                .set_cursor(row, self.layout.tree_area.height as usize);
-            self.sync_current()?;
+            match self.focus {
+                Pane::Tree => {
+                    self.nav.set_cursor(row, self.tree_viewport());
+                    self.sync_current()?;
+                }
+                Pane::Code => {
+                    let len = self.view_len();
+                    self.code.jump(row, len);
+                }
+            }
         }
         Ok(())
     }
@@ -1534,8 +1653,7 @@ impl App {
             .position(|f| f.path == path)
             .and_then(|index| self.nav.row_of_file(index));
         if let Some(row) = row {
-            self.nav
-                .set_cursor(row, self.layout.tree_area.height as usize);
+            self.nav.set_cursor(row, self.tree_viewport());
             self.sync_current()?;
         }
         Ok(())
@@ -1547,11 +1665,7 @@ impl App {
     /// checks survive (they're keyed by path).
     fn reload(&mut self) -> Result<()> {
         // A manual reload supersedes any in-flight live refresh.
-        self.scan_seq += 1;
-        self.scan_inflight = false;
-        self.rescan_needed = false;
-        self.meta_pending = false;
-        self.dirty_paths.clear();
+        self.scan.cancel();
         self.files = self.vcs.changed_files(&self.cmp)?;
         self.nav.rebuild(&self.files);
         self.current = None;
@@ -1562,65 +1676,85 @@ impl App {
         Ok(())
     }
 
+    /// Manual refresh (`r`): recompute all files and views, but keep the
+    /// reviewer's place — unlike [`Self::reload`], which starts over
+    /// (new comparison, new PR, leaving a session).
+    fn refresh(&mut self) -> Result<()> {
+        self.scan.cancel();
+        let files = self.vcs.changed_files(&self.cmp)?;
+        let (current_path, lineno) = self.current_anchor();
+        self.files = files;
+        self.nav
+            .rebuild_preserving(&self.files, self.tree_viewport());
+        self.cache.reset();
+        self.restore_place(current_path, lineno)?;
+        self.start_prefetch();
+        Ok(())
+    }
+
+    /// Re-anchor after the file list was swapped out underneath the
+    /// reviewer: the shown file is re-found by path, its cursor by line
+    /// number; when the file is gone, fall back to the tree cursor.
+    fn restore_place(&mut self, path: Option<PathBuf>, lineno: Option<u32>) -> Result<()> {
+        self.current = path
+            .as_ref()
+            .and_then(|p| self.files.iter().position(|f| f.path == *p));
+        if let Some(index) = self.current {
+            self.ensure_view(index)?;
+            self.reanchor_cursor(lineno);
+        } else {
+            self.code.reset_for_new_view();
+            self.sync_current()?;
+        }
+        Ok(())
+    }
+
+    /// Put the code cursor back on `lineno` (or the nearest row after it)
+    /// in the freshly computed view. Selections spanned content that may
+    /// be gone; they never survive a re-anchor.
+    fn reanchor_cursor(&mut self, lineno: Option<u32>) {
+        if let Some(view) = self.current_view() {
+            let last = view.flat_len().saturating_sub(1);
+            self.code.cursor = lineno
+                .and_then(|lineno| view.row_of_lineno(lineno))
+                .unwrap_or(self.code.cursor)
+                .min(last);
+            self.code.select_anchor = None;
+            self.code.mouse_sel = None;
+        }
+    }
+
     // --- live reload ---
 
     /// A debounced watcher batch arrived: remember what went stale and
     /// kick off (or queue) a background status scan.
-    fn on_fs_changed(&mut self, paths: Vec<PathBuf>, meta: bool) -> Result<()> {
-        self.dirty_paths.extend(paths);
-        self.meta_pending |= meta;
+    fn on_fs_changed(&mut self, paths: Vec<PathBuf>, meta: bool) {
+        self.scan.dirty_paths.extend(paths);
+        self.scan.meta_pending |= meta;
         // In a PR session the working tree isn't shown; what changed is
         // picked up by the full reload on leaving.
         if self.pr.is_some() {
-            return Ok(());
+            return;
         }
-        if self.scan_inflight {
-            self.rescan_needed = true;
+        if self.scan.inflight {
+            self.scan.rescan_needed = true;
         } else {
             self.start_status_scan();
         }
-        Ok(())
     }
 
     /// Scan the working tree off the main thread; the result comes back
     /// as [`AppEvent::StatusReady`]. When git metadata moved the
     /// comparison is re-resolved too (commits, branch switches, rebases).
     fn start_status_scan(&mut self) {
-        self.scan_inflight = true;
-        self.scan_seq += 1;
-        let seq = self.scan_seq;
-        let refresh_cmp = std::mem::take(&mut self.meta_pending);
+        self.scan.inflight = true;
+        let seq = self.scan.next_seq();
+        let refresh_cmp = std::mem::take(&mut self.scan.meta_pending);
         let root = self.vcs.root().to_path_buf();
         let cmp = self.cmp.clone();
         let tx = self.events_tx.clone();
         std::thread::spawn(move || {
-            let result = (|| {
-                let vcs = crate::vcs::detect(&root).map_err(|e| e.to_string())?;
-                let mut cmp = if refresh_cmp {
-                    // Mid-operation states (rebase, unborn HEAD) can fail
-                    // to resolve; keep reviewing against the old ancestor.
-                    match vcs.comparison(Some(&cmp.base_label)) {
-                        Ok(mut fresh) => {
-                            fresh.scope = cmp.scope.clone();
-                            fresh
-                        }
-                        Err(_) => cmp,
-                    }
-                } else {
-                    cmp
-                };
-                let files = match vcs.changed_files(&cmp) {
-                    Ok(files) => files,
-                    // A scoped commit can vanish (rebase, amend): widen
-                    // back to everything rather than failing the refresh.
-                    Err(_) if cmp.scope != Scope::All => {
-                        cmp.scope = Scope::All;
-                        vcs.changed_files(&cmp).map_err(|e| e.to_string())?
-                    }
-                    Err(err) => return Err(err.to_string()),
-                };
-                Ok((cmp, files))
-            })();
+            let result = scan_status(&root, cmp, refresh_cmp);
             let _ = tx.send(AppEvent::StatusReady { seq, result });
         });
     }
@@ -1630,17 +1764,17 @@ impl App {
         seq: u64,
         result: Result<(Comparison, Vec<ChangedFile>), String>,
     ) -> Result<()> {
-        if seq != self.scan_seq {
+        if seq != self.scan.seq {
             return Ok(()); // superseded by a reload or base switch
         }
         if self.pr.is_some() {
             // A PR session started while the scan ran and owns the file
             // list now; the reload on leaving covers what changed.
-            self.scan_inflight = false;
-            self.rescan_needed = false;
+            self.scan.inflight = false;
+            self.scan.rescan_needed = false;
             return Ok(());
         }
-        self.scan_inflight = false;
+        self.scan.inflight = false;
         match result {
             Ok((cmp, files)) => {
                 self.cmp = cmp;
@@ -1648,7 +1782,7 @@ impl App {
             }
             Err(err) => self.notice = Some(format!("refresh failed: {err}")),
         }
-        if std::mem::take(&mut self.rescan_needed) {
+        if std::mem::take(&mut self.scan.rescan_needed) {
             self.start_status_scan();
         }
         Ok(())
@@ -1658,22 +1792,16 @@ impl App {
     /// keeps its cursor and collapsed dirs (matched by path), the shown
     /// file stays shown, and its cursor re-anchors by line number.
     fn apply_refresh(&mut self, files: Vec<ChangedFile>) -> Result<()> {
-        let current_path = self
-            .current
-            .and_then(|i| self.files.get(i))
-            .map(|f| f.path.clone());
-        // Anchor before anything moves: the new-side line under the cursor.
-        let anchor = self
-            .current_view()
-            .and_then(|view| view.lineno_at(self.code.cursor));
+        // Anchor before anything moves.
+        let (current_path, anchor) = self.current_anchor();
         self.files = files;
         self.nav
-            .rebuild_preserving(&self.files, self.layout.tree_area.height as usize);
-        let dirty: HashSet<PathBuf> = self.dirty_paths.drain().collect();
+            .rebuild_preserving(&self.files, self.tree_viewport());
+        let dirty: HashSet<PathBuf> = self.scan.dirty_paths.drain().collect();
         for path in &dirty {
             self.cache.remove(path);
         }
-        let live: HashSet<&std::path::Path> = self.files.iter().map(|f| f.path.as_path()).collect();
+        let live: HashSet<&Path> = self.files.iter().map(|f| f.path.as_path()).collect();
         self.cache.retain(|path| live.contains(path));
         self.current = current_path
             .as_ref()
@@ -1683,16 +1811,7 @@ impl App {
             // milliseconds) and put the cursor back on the same line.
             (Some(index), Some(path)) if dirty.contains(path) => {
                 self.ensure_view(index)?;
-                if let Some(view) = self.current_view() {
-                    let last = view.flat_len().saturating_sub(1);
-                    self.code.cursor = anchor
-                        .and_then(|lineno| view.row_of_lineno(lineno))
-                        .unwrap_or(self.code.cursor)
-                        .min(last);
-                    // Selections spanned content that no longer exists.
-                    self.code.select_anchor = None;
-                    self.code.mouse_sel = None;
-                }
+                self.reanchor_cursor(anchor);
             }
             (Some(_), _) => {} // untouched: the cached view is still valid
             (None, _) => {
@@ -1745,7 +1864,7 @@ impl App {
             let session = session.clone();
             let tx = self.events_tx.clone();
             std::thread::spawn(move || {
-                let Ok(vcs) = crate::vcs::detect(&root) else {
+                let Ok(vcs) = vcs::detect(&root) else {
                     return;
                 };
                 let mut nth = worker;
@@ -1952,16 +2071,38 @@ impl App {
     }
 }
 
-/// One picker row for a pull request: number, title, author, freshness.
-fn pr_label(pr: &PullRequest) -> String {
-    let draft = if pr.draft { " · draft" } else { "" };
-    format!(
-        "#{} {} · {} · {}{draft}",
-        pr.number,
-        pr.title,
-        pr.author,
-        forge::date_of(&pr.updated_at)
-    )
+/// One background status scan, run off the main thread with its own
+/// repository handle (gix handles aren't shared across threads). The
+/// recovery policy is deliberately forgiving: mid-operation states
+/// (rebase, unborn HEAD) can fail to re-resolve the comparison — keep
+/// reviewing against the old ancestor; a scoped commit can vanish
+/// (rebase, amend) — widen back to everything rather than failing.
+fn scan_status(
+    root: &Path,
+    cmp: Comparison,
+    refresh_cmp: bool,
+) -> Result<(Comparison, Vec<ChangedFile>), String> {
+    let vcs = vcs::detect(root).map_err(|e| e.to_string())?;
+    let mut cmp = if refresh_cmp {
+        match vcs.comparison(Some(&cmp.base_label)) {
+            Ok(mut fresh) => {
+                fresh.scope = cmp.scope.clone();
+                fresh
+            }
+            Err(_) => cmp,
+        }
+    } else {
+        cmp
+    };
+    let files = match vcs.changed_files(&cmp) {
+        Ok(files) => files,
+        Err(_) if cmp.scope != Scope::All => {
+            cmp.scope = Scope::All;
+            vcs.changed_files(&cmp).map_err(|e| e.to_string())?
+        }
+        Err(err) => return Err(err.to_string()),
+    };
+    Ok((cmp, files))
 }
 
 fn copy_to_clipboard(text: &str) -> Result<()> {

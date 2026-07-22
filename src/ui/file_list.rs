@@ -4,9 +4,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::App;
+use crate::app::{App, Pane};
 use crate::theme::Theme;
 use crate::tree::NodeKind;
+use crate::ui::{header_style, search_range};
 use crate::vcs::model::FileStatus;
 
 pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
@@ -16,7 +17,7 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
         done => format!("files ({done}/{} reviewed)", app.files.len()),
     };
     frame.render_widget(
-        Paragraph::new(progress).style(Style::default().fg(theme.muted)),
+        Paragraph::new(progress).style(header_style(theme, app.focused_pane() == Pane::Tree)),
         header,
     );
 
@@ -50,7 +51,7 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                     spans.extend(label(Style::default()));
                     Line::from(spans)
                 }
-                NodeKind::File { status, index } if app.is_checked(*index) => {
+                NodeKind::File { index, .. } if app.is_checked(*index) => {
                     // Reviewed: the whole row recedes behind a checkmark.
                     let dim = Style::default().fg(theme.muted);
                     let mut spans = vec![Span::styled(format!("{indent}✓ "), dim)];
@@ -78,13 +79,11 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
     frame.render_widget(Paragraph::new(rows), content);
 }
 
-/// A row label, with the search query's match highlighted within it.
+/// A row label, with the tree query's match highlighted within it.
 fn label_spans(label: String, base: Style, app: &App) -> Vec<Span<'static>> {
-    let query = app.search_query();
+    let query = app.tree_search().to_lowercase();
     if !query.is_empty()
-        && let Some(start) = label.to_lowercase().find(&query.to_lowercase())
-        && let end = start + query.len()
-        && label.get(start..end).is_some()
+        && let Some((start, end)) = search_range(&label, &query)
     {
         return vec![
             Span::styled(label[..start].to_string(), base),

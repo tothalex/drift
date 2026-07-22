@@ -7,11 +7,51 @@ mod status_bar;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
+use crate::theme::Theme;
 
 /// Columns before the code text: accent bar (1) + line number (4) + gap (1).
 pub const CODE_GUTTER: u16 = 6;
+
+/// The focused pane's header lights up: cursor keys act there.
+fn header_style(theme: &Theme, focused: bool) -> Style {
+    if focused {
+        Style::default().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.muted)
+    }
+}
+
+/// Draw a centered floating panel over the app: clear the area, paint
+/// the shared panel background. All overlays center identically.
+fn draw_panel(frame: &mut Frame, theme: &Theme, lines: Vec<Line<'static>>, width: u16) {
+    let area = frame.area();
+    let width = width.min(area.width);
+    let height = (lines.len() as u16 + 1).min(area.height);
+    let panel = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, panel);
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(theme.panel_bg)),
+        panel,
+    );
+}
+
+/// First case-insensitive occurrence of `query_lower` in `content`, as a
+/// byte range — guarded against lowercasing shifting char boundaries.
+fn search_range(content: &str, query_lower: &str) -> Option<(usize, usize)> {
+    let start = content.to_lowercase().find(query_lower)?;
+    let end = start + query_lower.len();
+    content.get(start..end).map(|_| (start, end))
+}
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [main, status] =

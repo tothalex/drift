@@ -14,12 +14,18 @@ use crate::processor::{self, ViewOptions};
 use crate::vcs::Vcs;
 use crate::vcs::model::{ChangedFile, DiffLine, FileStatus, RevisionId};
 
-/// Virtual path of the conversation entry in the file tree.
+/// Virtual path of the conversation entry in the file tree. The leading
+/// [`crate::tree::VIRTUAL_PREFIX`] pins it above every directory and file.
 pub const CONVERSATION_PATH: &str = "#conversation";
 
 /// Comment bodies wrap to this many columns at view-build time so rows
 /// are stable for the cursor and renderer.
 const WRAP_WIDTH: usize = 96;
+
+/// The key hint under an anchored thread; orphaned threads in the
+/// conversation drop the fold (the conversation never folds them).
+const THREAD_HINT: &str = "[a] reply · [t] fold · [r] resolve · [d] delete (on a comment)";
+const ORPHAN_HINT: &str = "[a] reply · [r] resolve · [d] delete (on a comment)";
 
 /// An open pull request under review. While set, the app's file list and
 /// views come from the forge data instead of the working tree.
@@ -106,30 +112,36 @@ fn splice_threads(
         if anchor.path != path {
             continue;
         }
-        let placed = sections.iter_mut().any(|section| {
-            let Some(at) = section.lines.iter().position(
-                |line| matches!(line, ViewLine::Diff { line, .. } if anchors_at(anchor, line)),
-            ) else {
-                return false;
-            };
-            let rows = thread_rows(thread, collapsed.contains(&thread.key), THREAD_HINT);
-            section.lines.splice(at + 1..at + 1, rows);
-            true
+        let spot = sections.iter().enumerate().find_map(|(nth, section)| {
+            section
+                .lines
+                .iter()
+                .position(
+                    |line| matches!(line, ViewLine::Diff { line, .. } if anchors_at(anchor, line)),
+                )
+                .map(|at| (nth, at))
         });
-        if !placed {
-            unplaced.push(thread);
+        match spot {
+            Some((nth, at)) => {
+                let rows = thread_rows(thread, collapsed.contains(&thread.key), THREAD_HINT);
+                sections[nth].lines.splice(at + 1..at + 1, rows);
+            }
+            None => unplaced.push(thread),
         }
     }
     for thread in unplaced {
-        let line = thread
+        let note = match thread
             .anchor
             .as_ref()
             .and_then(|a| a.new_line.or(a.old_line))
-            .map_or(String::new(), |n| format!("line {n}, "));
+        {
+            Some(lineno) => format!("thread on line {lineno}, not shown in this view:"),
+            None => "thread not shown in this view:".to_string(),
+        };
         let mut lines = vec![ViewLine::CommentBody {
             key: thread.key.clone(),
             id: String::new(),
-            text: format!("thread on {line}not shown in this view:"),
+            text: note,
         }];
         lines.extend(thread_rows(
             thread,
@@ -147,11 +159,6 @@ fn anchors_at(anchor: &Anchor, line: &DiffLine) -> bool {
         Side::Old => anchor.old_line.is_some() && line.old_lineno == anchor.old_line,
     }
 }
-
-/// The key hint under an anchored thread; orphaned threads in the
-/// conversation drop the fold (the conversation never folds them).
-const THREAD_HINT: &str = "[a] reply · [t] fold · [r] resolve · [d] delete (on a comment)";
-const ORPHAN_HINT: &str = "[a] reply · [r] resolve · [d] delete (on a comment)";
 
 /// A thread as view rows: every comment expanded and a trailing key
 /// hint, or just a head row summarizing the fold.
@@ -588,5 +595,28 @@ mod tests {
         assert_eq!(wrapped, vec!["aaaa bbbb", "cccc"]);
         let hard = wrap("abcdefghijkl", 5);
         assert_eq!(hard, vec!["abcde", "fghij", "kl"]);
+        // Consecutive spaces survive as empty words without panicking.
+        assert_eq!(wrap("a  b", 10), vec!["a  b"]);
+    }
+
+    #[test]
+    fn two_threads_on_one_line_both_splice_under_it() {
+        // Pins today's behavior: the later thread splices directly under
+        // the diff line, so same-line threads display newest-first.
+        let mut second = thread("t2", Some(anchor_new(2)));
+        second.comments.truncate(1);
+        second.comments[0].author = "zoe".to_string();
+        let data = one_file_data(vec![thread("t1", Some(anchor_new(2))), second]);
+        let view = compute(
+            &data,
+            &HashSet::new(),
+            &data.files[0].changed,
+            &NoVcs,
+            ViewOptions::default(),
+        );
+        let rows = rows_of(&view);
+        let added = rows.iter().position(|r| r == "diff:    new();").unwrap();
+        assert_eq!(rows[added + 1], "head:zoe");
+        assert!(rows.contains(&"head:mia".to_string()));
     }
 }
