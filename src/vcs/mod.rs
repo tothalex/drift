@@ -58,8 +58,10 @@ pub trait Vcs {
     /// Branches usable as a comparison base, most recently active first.
     fn branches(&self) -> Result<Vec<String>, VcsError>;
 
-    /// Commits on the work side since the ancestor, newest first. Feeds
-    /// the scope picker; the comparison's own scope is ignored.
+    /// Commits on the work side since the ancestor, newest first — or,
+    /// when the work side is the base itself (e.g. sitting on main),
+    /// recent history, capped. Feeds the scope picker; the comparison's
+    /// own scope is ignored.
     fn commits(&self, cmp: &Comparison) -> Result<Vec<CommitInfo>, VcsError>;
 
     /// Of these root-relative paths, the ones the VCS does not ignore.

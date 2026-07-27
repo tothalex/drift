@@ -397,18 +397,21 @@ impl Vcs for GixVcs {
             .map_err(|_| VcsError::RevisionNotFound("HEAD".to_string()))?;
         let ancestor = gix::ObjectId::from_hex(cmp.ancestor.0.as_bytes())
             .map_err(|err| VcsError::Tool(format!("bad ancestor id: {err}")))?;
-        let walk = self
-            .repo
-            .rev_walk([head.detach()])
-            .with_hidden([ancestor])
-            .sorting(gix::revision::walk::Sorting::ByCommitTime(
-                Default::default(),
-            ))
-            .all()
-            .map_err(tool)?;
+        // On the base itself (merge-base == HEAD) hiding the ancestor
+        // would hide everything; offer recent history instead, capped so
+        // a long-lived repo doesn't stall the picker.
+        let on_base = head.detach() == ancestor;
+        let mut walk = self.repo.rev_walk([head.detach()]).sorting(
+            gix::revision::walk::Sorting::ByCommitTime(Default::default()),
+        );
+        if !on_base {
+            walk = walk.with_hidden([ancestor]);
+        }
+        let walk = walk.all().map_err(tool)?;
+        let limit = if on_base { RECENT_COMMITS } else { usize::MAX };
 
         let mut commits = Vec::new();
-        for info in walk {
+        for info in walk.take(limit) {
             let info = info.map_err(tool)?;
             let commit = info.object().map_err(tool)?;
             let summary = commit
@@ -431,6 +434,10 @@ fn tool(err: impl std::fmt::Display) -> VcsError {
 
 /// Context lines around each change, matching git's default.
 const CONTEXT: u32 = 3;
+
+/// How much history the scope picker offers when the work side is the
+/// base itself and there are no branch commits to list.
+const RECENT_COMMITS: usize = 100;
 
 /// Structured hunks straight from imara-diff's line ranges — no unified
 /// text round-trip (imara 0.2's text writer emits hunk headers that

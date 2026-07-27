@@ -273,6 +273,41 @@ fn commits_lists_branch_commits_newest_first() {
 }
 
 #[test]
+fn commits_on_the_base_itself_offer_recent_history() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    git(dir, &["checkout", "-q", "master"]);
+    write(dir, "second.txt", "more\n");
+    git(dir, &["add", "second.txt"]);
+    git_dated(
+        dir,
+        "2030-01-01T00:00:00",
+        &["commit", "-qm", "master change"],
+    );
+
+    let vcs = detect(dir).unwrap();
+    let mut cmp = vcs.comparison(Some("master")).unwrap();
+    let commits = vcs.commits(&cmp).unwrap();
+    let summaries: Vec<_> = commits.iter().map(|c| c.summary.as_str()).collect();
+    assert_eq!(summaries, vec!["master change", "initial"]);
+
+    // Reviewing one of them works without any branch divergence; the
+    // root commit diffs against the empty tree.
+    cmp.scope = Scope::Commit(commits[1].id.clone());
+    let files = vcs.changed_files(&cmp).unwrap();
+    let paths: Vec<_> = files.iter().map(|f| f.path.as_path()).collect();
+    assert_eq!(
+        paths,
+        vec![
+            Path::new("lib.rs"),
+            Path::new("notes.txt"),
+            Path::new("oldname.txt"),
+        ]
+    );
+    assert!(files.iter().all(|f| f.status == FileStatus::Added));
+}
+
+#[test]
 fn untracked_scope_lists_only_untracked_files() {
     let tmp = fixture();
     let vcs = detect(tmp.path()).unwrap();
