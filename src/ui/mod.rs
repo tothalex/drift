@@ -56,12 +56,15 @@ fn search_range(content: &str, query_lower: &str) -> Option<(usize, usize)> {
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [main, status] =
         Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(frame.area());
-    let [sidebar, diff] = Layout::horizontal([
-        Constraint::Percentage(app.layout.split_percent),
-        Constraint::Fill(1),
-    ])
-    .spacing(1)
-    .areas(main);
+    // A hidden tree gives the code pane the full width (and no divider).
+    let sidebar_width = if app.layout.tree_visible {
+        Constraint::Percentage(app.layout.split_percent)
+    } else {
+        Constraint::Length(0)
+    };
+    let [sidebar, diff] = Layout::horizontal([sidebar_width, Constraint::Fill(1)])
+        .spacing(if app.layout.tree_visible { 1 } else { 0 })
+        .areas(main);
 
     let (tree_header, tree_content) = pane_areas(sidebar);
     let (code_header, code_content) = pane_areas(diff);
@@ -74,7 +77,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // A freshly opened view starts with its cursor on the middle line.
     app.apply_pending_center();
 
-    file_list::draw(frame, app, tree_header, tree_content);
+    if app.layout.tree_visible {
+        file_list::draw(frame, app, tree_header, tree_content);
+    }
     diff_view::draw(frame, app, code_header, code_content);
     status_bar::draw(frame, app, status);
     if app.help_open() {

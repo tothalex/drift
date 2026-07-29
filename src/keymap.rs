@@ -35,6 +35,7 @@ pub enum Action {
     Visual,
     Yank,
     CopyPath,
+    ToggleTree,
     GrowTree,
     ShrinkTree,
     PickBase,
@@ -68,12 +69,13 @@ pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("prev_match", Action::PrevMatch, &["N"]),
     ("toggle_collapse", Action::ToggleCollapse, &["z"]),
     ("toggle_comment_fold", Action::ToggleCommentFold, &["C"]),
-    ("toggle_thread", Action::ToggleThread, &["t"]),
+    ("toggle_thread", Action::ToggleThread, &["T"]),
     ("copy_path", Action::CopyPath, &["c"]),
     ("check_file", Action::CheckFile, &["x"]),
     ("uncheck_last", Action::UncheckLast, &["X"]),
     ("visual", Action::Visual, &["v"]),
     ("yank", Action::Yank, &["y"]),
+    ("toggle_tree", Action::ToggleTree, &["t"]),
     ("grow_tree", Action::GrowTree, &[">"]),
     ("shrink_tree", Action::ShrinkTree, &["<"]),
     ("pick_base", Action::PickBase, &["b"]),
@@ -220,6 +222,7 @@ const HELP: &[(&[Action], &str)] = &[
         &[Action::ToggleThread],
         "fold / unfold the review thread (PR)",
     ),
+    (&[Action::ToggleTree], "show / hide the file tree"),
     (
         &[Action::GrowTree, Action::ShrinkTree],
         "resize panes (or drag the gap)",
@@ -303,6 +306,15 @@ mod tests {
         assert_eq!(
             map.action_for(KeyCode::Char('z'), KeyModifiers::NONE),
             Some(Action::ToggleCollapse)
+        );
+        // Case distinguishes: t toggles the tree, T folds the thread.
+        assert_eq!(
+            map.action_for(KeyCode::Char('t'), KeyModifiers::NONE),
+            Some(Action::ToggleTree)
+        );
+        assert_eq!(
+            map.action_for(KeyCode::Char('T'), KeyModifiers::NONE),
+            Some(Action::ToggleThread)
         );
     }
 

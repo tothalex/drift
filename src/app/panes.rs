@@ -12,6 +12,8 @@ pub struct PaneLayout {
     pub divider_x: u16,
     /// Tree pane width as a percentage of the window.
     pub split_percent: u16,
+    /// The tree pane is shown; hidden gives the code the full width.
+    pub tree_visible: bool,
     /// The divider is being dragged.
     pub resizing: bool,
 }
@@ -30,12 +32,14 @@ impl PaneLayout {
             main_area: Rect::default(),
             divider_x: 0,
             split_percent: 16,
+            tree_visible: true,
             resizing: false,
         }
     }
 
     pub fn on_divider(&self, position: Position) -> bool {
-        self.main_area.contains(position)
+        self.tree_visible
+            && self.main_area.contains(position)
             && (i32::from(position.x) - i32::from(self.divider_x)).abs() <= 1
     }
 

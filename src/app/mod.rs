@@ -643,7 +643,11 @@ impl App {
             }
             Action::Quit => self.quit = true,
             Action::Help => self.help_open = true,
-            Action::FocusTree => self.focus = Pane::Tree,
+            // Focusing the tree reveals it when hidden.
+            Action::FocusTree => {
+                self.layout.tree_visible = true;
+                self.focus = Pane::Tree;
+            }
             Action::FocusCode => self.focus = Pane::Code,
             Action::NextFile => self.move_file(count)?,
             Action::PrevFile => self.move_file(-count)?,
@@ -685,6 +689,13 @@ impl App {
                 self.reload_current_view()?;
             }
             Action::ToggleThread => self.toggle_thread()?,
+            Action::ToggleTree => {
+                self.layout.tree_visible = !self.layout.tree_visible;
+                // A hidden pane can't hold the focus.
+                if !self.layout.tree_visible {
+                    self.focus = Pane::Code;
+                }
+            }
             Action::CheckFile => self.toggle_check()?,
             Action::UncheckLast => self.uncheck_last()?,
             Action::Visual => self.code.toggle_visual(),

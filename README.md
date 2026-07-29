@@ -110,7 +110,7 @@ conversation in place:
 ![reviewing a pull request with an inline thread](assets/pr-review.png)
 
 - Inline review threads sit under the exact diff lines they were written
-  on, with their resolved/unresolved state; `t` folds a thread down to
+  on, with their resolved/unresolved state; `T` folds a thread down to
   its head line. Threads that no longer match the current diff stay
   reachable instead of disappearing.
 - A virtual `# conversation` entry pinned at the top of the tree holds
