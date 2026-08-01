@@ -1,24 +1,648 @@
 <!doctype html>
 <html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>drift</title>
+<title>drift — review your changes in the terminal</title>
+<meta name="description" content="Review your working changes like a pull request — in the terminal.">
+<meta name="theme-color" content="#000000">
+<meta property="og:title" content="drift — review your changes in the terminal">
+<meta property="og:description" content="Everything that differs from the base branch — committed, uncommitted, untracked — in one live terminal view. PR reviews and AI-agent prompts included.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23000000'/%3E%3Crect x='4' y='4' width='5' height='8' fill='%2389ca78'/%3E%3C/svg%3E">
 <style>
-  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-         max-width: 620px; margin: 12vh auto; padding: 0 24px;
-         background: #101014; color: #d6d6d6; line-height: 1.6; }
-  h1 { font-size: 1.4rem; font-weight: 600; }
-  p  { color: #9a9a9a; }
-  code { display: block; padding: 14px 18px; margin: 28px 0;
-         background: #1a1a20; border-radius: 8px; overflow-x: auto;
-         color: #d6d6d6; }
-  a { color: #87afd7; text-decoration: none; }
+  /* Every value below is what drift itself renders: the onedark_dark
+     syntax palette from src/theme.rs, drift's ANSI-256 UI grays
+     (235/236/238 → #262626/#303030/#444444), and the terminal's black. */
+  :root {
+    --bg: #000000;
+    --pane: #000000;
+    --pane-2: #262626;        /* drift panel_bg (235) */
+    --line: #262626;
+    --fg: #abb2bf;            /* one dark foreground (mono-1) */
+    --fg-bright: #dcdfe4;     /* one dark's ANSI bright white */
+    --muted: #5c6370;         /* one dark's bright black (mono-3) */
+    --comment: #7f848e;
+    --blue: #61afef;
+    --green: #89ca78;
+    --red: #ef596f;
+    --yellow: #e5c07b;
+    --purple: #d55fde;
+    --orange: #d19a66;
+    --cyan: #2bbac5;
+    --added: #87d787;         /* 114 */
+    --removed: #d75f87;       /* 168 */
+    --thread: #87afd7;        /* 110 */
+    --emph-added-bg: #005f00;   /* 22 */
+    --emph-removed-bg: #5f0000; /* 52 */
+    --cursor-bg: #303030;     /* 236 */
+    --select-bg: #444444;     /* 238 */
+    --mono: ui-monospace, "SF Mono", Menlo, "Cascadia Code", "DejaVu Sans Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* Each section is one screenful; scrolling always settles on a whole
+     section, never between two. */
+  html { scroll-behavior: smooth; scroll-snap-type: y mandatory; }
+  .screen {
+    min-height: calc(100vh - 54px);
+    min-height: calc(100svh - 54px);
+    display: grid; align-content: center;
+    scroll-snap-align: start; scroll-margin-top: 54px;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Scrollbars in drift's grays — page and terminal panes alike. */
+  html { scrollbar-color: var(--pane-2) var(--bg); scrollbar-width: thin; }
+  ::-webkit-scrollbar { width: 10px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb {
+    background: var(--pane-2); border-radius: 5px;
+    border: 2px solid var(--bg);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--select-bg); }
+  ::selection { background: var(--select-bg); }
+  a { color: var(--thread); text-decoration: none; }
   a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ------- nav ------- */
+  .nav {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav .wrap { display: flex; align-items: center; gap: 28px; height: 54px; }
+  .brand { font-family: var(--mono); font-weight: 700; font-size: 17px; color: var(--fg-bright); }
+  .brand:hover { text-decoration: none; }
+  .brand i { font-style: normal; color: var(--green); animation: caret 1.2s steps(1) infinite; }
+  @keyframes caret { 50% { opacity: 0; } }
+  .nav nav { display: flex; gap: 22px; font-size: 14px; margin-left: auto; }
+  .nav nav a {
+    color: var(--muted); padding: 2px 0;
+    border-bottom: 1px solid transparent;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .nav nav a:hover { color: var(--fg-bright); text-decoration: none; border-bottom-color: var(--muted); }
+  /* Section links carry their section's accent — hovering previews the
+     same identity the scrollspy lights when the section is on screen. */
+  .nav nav a.active { color: var(--fg-bright); }
+  .nav nav a[href="#diff"]:hover,   .nav nav a.active[href="#diff"]   { color: var(--added);  border-bottom-color: var(--added); }
+  .nav nav a[href="#themes"]:hover, .nav nav a.active[href="#themes"] { color: var(--yellow); border-bottom-color: var(--yellow); }
+  .nav nav a[href="#pr"]:hover,     .nav nav a.active[href="#pr"]     { color: var(--thread); border-bottom-color: var(--thread); }
+  .nav nav a[href="#ai"]:hover,     .nav nav a.active[href="#ai"]     { color: var(--purple); border-bottom-color: var(--purple); }
+
+  /* ------- hero: title, demo, and install share the first viewport ------- */
+  .hero { padding: 16px 0 24px; }
+  .hero h1 {
+    font-size: clamp(26px, 3.1vw, 38px);
+    line-height: 1.15; letter-spacing: -0.02em;
+    color: var(--fg-bright); font-weight: 650;
+  }
+  .hero h1 em { font-style: normal; color: var(--green); white-space: nowrap; }
+  /* Below the demo: what it is (left) and how to get it (right). The
+     install box is sized by its command; the description takes the rest. */
+  .hero-cta { margin-top: 24px; display: grid; grid-template-columns: 1fr auto; gap: 48px; align-items: center; }
+  .hero .sub { font-size: 15.5px; color: var(--muted); max-width: 58ch; }
+  .hero .sub b { color: var(--fg); font-weight: 500; }
+
+  .install {
+    font-family: var(--mono); font-size: 13px;
+    background: var(--pane); border: 1px solid var(--line); border-radius: 10px;
+    display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+    max-width: 660px;
+  }
+  .install code { flex: 1; overflow-x: auto; white-space: nowrap; color: var(--fg-bright); }
+  .install code .p { color: var(--green); font-weight: 700; }
+  .install button {
+    font: inherit; font-size: 12px; color: var(--muted);
+    background: var(--pane-2); border: 1px solid var(--line); border-radius: 6px;
+    cursor: pointer; flex-shrink: 0;
+    /* Fixed box: the copy → copied ✓ swap must not move anything —
+       exact width, sized for the wider "copied ✓" state. */
+    width: 92px; height: 27px; padding: 0;
+    line-height: 25px; text-align: center;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .install button:hover { color: var(--fg-bright); border-color: var(--muted); }
+  .install button.ok { color: var(--added); border-color: var(--added); }
+  .hero .fine { margin-top: 12px; font-size: 13px; color: var(--muted); }
+  /* The hero's showpiece: a full-width drift session under the headline,
+     stretched to use the whole first viewport — the empty rows below the
+     code and the bottom-pinned status bar are how a real terminal sits. */
+  .hero.screen { align-content: stretch; }
+  .hero .wrap { display: flex; flex-direction: column; height: 100%; }
+  .hero .term {
+    margin-top: 24px; font-size: 13px;
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+  }
+  .hero .term .body { flex: 1; display: flex; flex-direction: column; }
+  .hero .term .cols { flex: 1; }
+  .hero .term .sb { margin-top: auto; }
+  .hero .tree { width: 200px; }
+  .hero .cols { min-width: 0; }
+
+  /* ------- terminal window ------- */
+  .term {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+    background: var(--pane); border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+  }
+  .term .titlebar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--line);
+    color: var(--muted); font-size: 11.5px;
+  }
+  .term .titlebar .dots { display: flex; gap: 6px; }
+  .term .titlebar .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .term .titlebar .name { margin: 0 auto; }
+  .term .body { padding: 12px 0 8px; overflow-x: auto; }
+  /* Pane header, as drift draws it: darkgray path + colored diffstat. */
+  .term .hdr { color: var(--muted); padding: 0 0 6px 14px; }
+  .term .hdr b { color: var(--fg-bright); font-weight: 600; }
+  .term .hdr .plus { color: var(--added); }
+  .term .hdr .minus { color: var(--removed); }
+  .cols { display: flex; min-width: 560px; }
+  .tree { width: 176px; flex-shrink: 0; padding: 0 8px 0 14px; border-right: 1px solid var(--line); }
+  .code { flex: 1; padding-right: 14px; }
+  .row { display: flex; white-space: pre; }
+  /* Changed lines are marked the way drift marks them: an accent bar in
+     the gutter plus word-level emphasis — no row-wide tint. */
+  .row::before { content: "▎"; color: transparent; flex-shrink: 0; }
+  .row.add::before { color: var(--added); }
+  .row.del::before { color: var(--removed); }
+  .row .g { width: 5ch; flex-shrink: 0; text-align: right; padding-right: 1ch; color: var(--muted); }
+  .row .g.a { color: var(--added); }
+  .row .g.r { color: var(--removed); }
+  .row.cur { background: var(--cursor-bg); }
+  .row.sel { background: var(--select-bg); }
+  .tree .trow { white-space: pre; color: var(--fg); }
+  /* The tree cursor row: drift paints it on ANSI darkgray, bold. */
+  .tree .trow.on { background: var(--muted); color: var(--fg-bright); font-weight: 600; }
+  /* Status letters: M is darkgray, untracked ? is green — like drift. */
+  .tree .m { color: var(--muted); } .tree .a { color: var(--added); }
+  .tree .arrow { color: var(--muted); }
+  /* Reviewed files recede entirely behind a muted checkmark. */
+  .badge { color: var(--muted); }
+  .sb {
+    display: flex; gap: 1.5ch; padding: 8px 14px; margin-top: 8px;
+    border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px;
+  }
+  .sb .seg { background: var(--fg); color: var(--bg); padding: 0 1ch; }
+  .sb .vis { background: var(--yellow); color: var(--bg); padding: 0 1ch; font-weight: 700; }
+  .sb .notice { color: var(--fg); }
+
+  /* syntax */
+  .kw { color: var(--purple); } .fn { color: var(--blue); }
+  .ty { color: var(--yellow); } .st { color: var(--green); }
+  .nu { color: var(--orange); } .pr { color: var(--red); }
+  .op { color: var(--cyan); } .pu { color: var(--fg); }
+  .br { color: var(--orange); } .cm { color: var(--comment); font-style: italic; }
+  /* Rust call-argument parens — purple, unlike other brackets. */
+  .cbr { color: var(--purple); }
+  /* The => fat arrow, themed apart from other operators. */
+  .ar { color: var(--purple); }
+  .emph-a { background: var(--emph-added-bg); border-radius: 2px; }
+  .emph-r { background: var(--emph-removed-bg); border-radius: 2px; }
+
+  /* ------- feature rows: one screenful each; the accent bar hugs the
+     content, not the whole screen ------- */
+  .features { padding: 0; }
+  .feature { padding: 24px 0; }
+  .feature-body {
+    display: grid; grid-template-columns: 4fr 6fr; gap: 56px;
+    align-items: center;
+    border-left: 3px solid var(--accent, var(--line));
+    padding-left: 32px;
+  }
+  .feature.flip .feature-body { grid-template-columns: 6fr 4fr; }
+  .feature.flip .txt { order: 2; }
+  .feature .eyebrow {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    letter-spacing: 0.12em; color: var(--accent);
+  }
+  .feature h2 {
+    margin-top: 10px; font-size: 26px; font-weight: 640;
+    letter-spacing: -0.015em; color: var(--fg-bright); line-height: 1.25;
+  }
+  .feature p { margin-top: 14px; color: var(--fg); max-width: 52ch; font-size: 15.5px; }
+  .feature p .k {
+    font-family: var(--mono); font-size: 0.88em;
+    color: var(--fg-bright); background: var(--pane-2);
+    padding: 1px 6px; border-radius: 4px;
+  }
+  .feature p .dim { color: var(--muted); }
+  #diff    { --accent: var(--added); }
+  #themes  { --accent: var(--yellow); }
+  #pr      { --accent: var(--thread); }
+  #ai      { --accent: var(--purple); }
+
+  /* theme switcher */
+  .swatches { display: flex; gap: 10px; padding: 10px 14px 2px; }
+  .swatches button {
+    font: inherit; font-size: 11.5px; cursor: pointer;
+    color: var(--muted); background: var(--pane-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px;
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+  }
+  .swatches button:hover { color: var(--fg-bright); border-color: var(--muted); }
+  .swatches button[aria-pressed="true"] { color: var(--bg); background: var(--fg); border-color: var(--fg); }
+  .term[data-theme="gruvbox"] {
+    --purple: #fb4934; --blue: #83a598; --yellow: #fabd2f;
+    --green: #b8bb26; --orange: #fe8019; --red: #d3869b;
+    --cyan: #8ec07c; --pane: #282828; --line: #45403d;
+  }
+  .term[data-theme="mono"] {
+    --purple: #dcdfe4; --blue: #dcdfe4; --yellow: #abb2bf;
+    --green: #828997; --orange: #dcdfe4; --red: #abb2bf; --cyan: #abb2bf;
+  }
+
+  /* PR thread */
+  .thread { margin: 4px 0 4px 7ch; }
+  .thread .q { border-left: 2px solid var(--thread); padding-left: 1.5ch; }
+  .thread .who { color: var(--thread); font-weight: 700; }
+  .thread .when { color: var(--muted); }
+  /* Hint rows are entirely muted, like drift's. */
+  .thread .hint { color: var(--muted); }
+
+  /* AI compose */
+  .ai-body { position: relative; }
+  .compose {
+    position: absolute; left: 50%; top: 46%;
+    transform: translate(-50%, -50%);
+    width: min(420px, 86%);
+    background: var(--pane-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  }
+  .compose .ct { color: var(--thread); font-weight: 700; }
+  .compose .ct::before { content: "● "; }
+  .compose .cline { display: flex; margin-top: 6px; }
+  .compose .cline::before { content: "┃ "; color: var(--thread); }
+  .compose .typed {
+    overflow: hidden; white-space: nowrap; width: 19ch;
+    border-right: 0.55ch solid var(--fg-bright);
+    animation: type 6s steps(19) infinite; color: var(--fg-bright);
+  }
+  @keyframes type {
+    0% { width: 0; } 35% { width: 19ch; } 88% { width: 19ch; opacity: 1; }
+    92% { width: 19ch; opacity: 0; } 100% { width: 0; opacity: 1; }
+  }
+  /* The composer footer is one dim line in drift — no bright keys. */
+  .compose .cfoot { margin-top: 8px; color: var(--muted); font-size: 11px; }
+  .ai-sent { animation: sent 6s steps(1) infinite; }
+  @keyframes sent { 0%, 45% { opacity: 0; } 55%, 100% { opacity: 1; } }
+  /* Sections ease in as they arrive; static without JS or with reduced
+     motion. */
+  .js .feature-body {
+    opacity: 0; transform: translateY(14px);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+  }
+  .js .feature-body.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .compose .typed { animation: none; width: 19ch; border-right-color: transparent; }
+    .ai-sent { animation: none; opacity: 1; }
+    .brand i { animation: none; }
+    .js .feature-body { opacity: 1; transform: none; transition: none; }
+    html { scroll-behavior: auto; }
+  }
+
+  /* ------- footer ------- */
+  footer { border-top: 1px solid var(--line); scroll-snap-align: end; }
+  footer .wrap {
+    display: flex; flex-wrap: wrap; gap: 24px; align-items: center;
+    padding: 28px 24px; font-family: var(--mono); font-size: 13px; color: var(--muted);
+  }
+  footer .wrap a { color: var(--muted); }
+  footer .wrap a:hover { color: var(--fg-bright); }
+  footer .right { margin-left: auto; }
+
+  @media (max-width: 880px) {
+    .hero-cta, .feature-body, .feature.flip .feature-body { grid-template-columns: 1fr; gap: 28px; }
+    .feature.flip .txt { order: 0; }
+    .feature-body { padding-left: 20px; }
+    .tree { display: none; }
+    .cols { min-width: 0; }
+  }
 </style>
-<h1>drift</h1>
-<p>Review your working changes like a pull request — in the terminal.</p>
-<code>curl -fsSL https://tothalex.github.io/drift/install.sh | sh</code>
-<p>macOS &amp; Linux. Windows (experimental):
-<a href="https://github.com/tothalex/drift/releases/latest">download the latest release</a>.</p>
-<p><a href="https://github.com/tothalex/drift">github.com/tothalex/drift</a></p>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="./">drift<i>_</i></a>
+    <nav>
+      <a href="#diff">diff view</a>
+      <a href="#themes">themes</a>
+      <a href="#pr">pull requests</a>
+      <a href="#ai">agents</a>
+      <a href="docs.html">docs</a>
+      <a href="https://github.com/tothalex/drift">github</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero screen">
+  <div class="wrap">
+    <h1>Review your working changes like a pull request — <em>in the terminal</em>.</h1>
+
+    <div class="term" aria-label="drift showing a changed file">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="name">drift — ~/code/shop</span></div>
+      <div class="body">
+        <div class="hdr">src/cart.ts  <span class="plus">+1</span> <span class="minus">−1</span></div>
+        <div class="cols">
+          <div class="tree">
+            <div class="trow"><span class="arrow">▾</span> src</div>
+            <div class="trow on">  <span class="m">M</span> cart.ts</div>
+            <div class="trow">  <span class="m">M</span> checkout.ts</div>
+            <div class="trow">  <span class="a">?</span> receipt.ts</div>
+            <div class="trow">  <span class="badge">✓</span> <span style="color:var(--muted)">api.ts</span></div>
+            <div class="trow"><span class="arrow">▸</span> tests</div>
+          </div>
+          <div class="code">
+            <div class="row"><span class="g">8</span><span>  <span class="fn">total</span><span class="br">()</span><span class="pu">:</span> <span class="ty">number</span> <span class="br">{</span></span></div>
+            <div class="row"><span class="g">9</span><span>    <span class="kw">return</span> <span class="ty">this</span><span class="pu">.</span><span class="pr">items</span><span class="pu">.</span><span class="fn">map</span><span class="br">((</span><span class="pr">i</span><span class="br">)</span> <span class="ar">=&gt;</span> <span class="pr">i</span><span class="pu">.</span><span class="pr">price</span> <span class="op">*</span> <span class="nu">1.27</span><span class="br">)</span><span class="pu">.</span><span class="fn">reduce</span><span class="br">((</span><span class="pr">a</span><span class="pu">,</span> <span class="pr">b</span><span class="br">)</span> <span class="ar">=&gt;</span> <span class="pr">a</span> <span class="op">+</span> <span class="pr">b</span><span class="pu">,</span> <span class="nu">0</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g">10</span><span>  <span class="br">}</span></span></div>
+            <div class="row"><span class="g">11</span><span> </span></div>
+            <div class="row"><span class="g">12</span><span>  <span class="fn">receipt</span><span class="br">()</span><span class="pu">:</span> <span class="ty">string</span> <span class="br">{</span></span></div>
+            <div class="row"><span class="g">13</span><span>    <span class="kw">const</span> <span class="pr">lines</span><span class="pu">:</span> <span class="ty">string</span><span class="br">[]</span> <span class="op">=</span> <span class="br">[]</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g">14</span><span>    <span class="kw">const</span> <span class="pr">n</span> <span class="op">=</span> <span class="ty">this</span><span class="pu">.</span><span class="fn">count</span><span class="br">()</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g">15</span><span>    <span class="kw">const</span> <span class="pr">sum</span> <span class="op">=</span> <span class="ty">this</span><span class="pu">.</span><span class="fn">total</span><span class="br">()</span><span class="pu">;</span></span></div>
+            <div class="row del"><span class="g r">16</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Subt</span><span class="emph-r"><span class="st">otal</span></span><span class="st">: </span><span class="pu">${</span><span class="pr">sum</span><span class="pu">}</span><span class="st">`</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row add cur"><span class="g a">16</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Sub</span><span class="emph-a"><span class="st"> (</span><span class="pu">${</span><span class="pr">n</span><span class="pu">}</span><span class="st"> items)</span></span><span class="st">: </span><span class="pu">${</span><span class="pr">sum</span><span class="pu">}</span><span class="st">`</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g">17</span><span>    <span class="kw">return</span> <span class="pr">lines</span><span class="pu">.</span><span class="fn">join</span><span class="br">(</span><span class="st">"\n"</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g">18</span><span>  <span class="br">}</span></span></div>
+          </div>
+        </div>
+        <div class="sb"><span class="seg">origin/main ← main</span><span>? keys · q quit</span></div>
+      </div>
+    </div>
+
+    <div class="hero-cta">
+      <p class="sub">Everything that differs from the base branch — <b>committed,
+      uncommitted, untracked</b> — in one live view that follows your edits
+      and never loses your place.</p>
+      <div>
+        <div class="install">
+          <code><span class="p">$</span> curl -fsSL https://tothalex.github.io/drift/install.sh | sh</code>
+          <button type="button" data-copy="curl -fsSL https://tothalex.github.io/drift/install.sh | sh">copy</button>
+        </div>
+        <p class="fine">macOS &amp; Linux · <a href="https://github.com/tothalex/drift/releases/latest">Windows (experimental)</a> · MIT</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="features wrap">
+
+  <section class="feature screen" id="diff">
+    <div class="feature-body">
+    <div class="txt">
+      <p class="eyebrow">DIFF VIEW</p>
+      <h2>Changes inside their code block, not bare hunks</h2>
+      <p>Tree-sitter resolves the enclosing function, class, or block around
+      every change — widen or narrow the scope with <span class="k">[</span> and
+      <span class="k">]</span>. Word-level emphasis marks the exact edit.
+      <span class="dim">Rust, Python, JavaScript, TypeScript, Go.</span></p>
+      <p>The working tree is watched: edits from your editor, your agent, or a
+      <span class="k">git commit</span> appear as they land.</p>
+    </div>
+    <div class="term">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="name">block scope · [ widen · ] narrow</span></div>
+      <div class="body">
+        <div class="hdr">src/cart.ts  <span class="plus">+1</span> <span class="minus">−1</span></div>
+        <div class="cols">
+          <div class="code" style="padding-left:14px">
+            <div class="row"><span class="g">23</span><span>  <span class="fn">receipt</span><span class="br">()</span><span class="pu">:</span> <span class="ty">string</span> <span class="br">{</span></span></div>
+            <div class="row"><span class="g">24</span><span>    <span class="kw">const</span> <span class="pr">lines</span><span class="pu">:</span> <span class="ty">string</span><span class="br">[]</span> <span class="op">=</span> <span class="br">[]</span><span class="pu">;</span></span></div>
+            <div class="row del"><span class="g r">26</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Subtotal: </span><span class="pu">${</span><span class="pr">subtotal</span><span class="pu">.</span><span class="fn">toFixed</span><span class="br">(</span><span class="nu">2</span><span class="br">)</span><span class="pu">}</span><span class="st">`</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row add cur"><span class="g a">26</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Subtotal </span><span class="emph-a"><span class="st">(</span><span class="pu">${</span><span class="ty">this</span><span class="pu">.</span><span class="pr">items</span><span class="pu">.</span><span class="pr">length</span><span class="pu">}</span><span class="st"> items)</span></span><span class="st">: …`</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g">27</span><span>    <span class="kw">return</span> <span class="pr">lines</span><span class="pu">.</span><span class="fn">join</span><span class="br">(</span><span class="st">"\n"</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g">28</span><span>  <span class="br">}</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <section class="feature flip screen" id="themes">
+    <div class="feature-body">
+    <div class="txt">
+      <p class="eyebrow">SYNTAX &amp; THEMES</p>
+      <h2>One Dark Pro out of the box, every color yours</h2>
+      <p>Built-in highlighting ships with the <span class="k">onedark</span>
+      palette — the one this page is painted with. Colors take ANSI names,
+      256-color indexes, or hex, with per-language overrides; a theme is one
+      TOML file next to your config.</p>
+    </div>
+    <div class="term" id="themed">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="name">~/.config/drift/themes/</span></div>
+      <div class="body">
+        <div class="swatches" role="group" aria-label="theme">
+          <button type="button" data-th="" aria-pressed="true">onedark</button>
+          <button type="button" data-th="gruvbox" aria-pressed="false">gruvbox.toml</button>
+          <button type="button" data-th="mono" aria-pressed="false">mono.toml</button>
+        </div>
+        <div class="cols">
+          <div class="code" style="padding-left:14px">
+            <div class="row"><span class="g">12</span><span><span class="kw">impl</span> <span class="ty">Cart</span> <span class="br">{</span></span></div>
+            <div class="row"><span class="g">13</span><span>    <span class="cm">// sums every line item, tax included</span></span></div>
+            <div class="row"><span class="g">14</span><span>    <span class="kw">pub fn</span> <span class="fn">total</span><span class="br">(</span><span class="pu">&amp;</span><span class="ty">self</span><span class="br">)</span> <span class="pu">-&gt;</span> <span class="ty">f64</span> <span class="br">{</span></span></div>
+            <div class="row"><span class="g">15</span><span>        <span class="ty">self</span><span class="pu">.</span><span class="pr">items</span><span class="pu">.</span><span class="fn">iter</span><span class="cbr">()</span><span class="pu">.</span><span class="fn">map</span><span class="cbr">(</span><span class="br">|</span><span class="pr">i</span><span class="br">|</span> <span class="pr">i</span><span class="pu">.</span><span class="pr">price</span> <span class="pu">*</span> <span class="nu">1.27</span><span class="cbr">)</span><span class="pu">.</span><span class="fn">sum</span><span class="cbr">()</span></span></div>
+            <div class="row"><span class="g">16</span><span>    <span class="br">}</span></span></div>
+            <div class="row"><span class="g">17</span><span><span class="br">}</span></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <section class="feature screen" id="pr">
+    <div class="feature-body">
+    <div class="txt">
+      <p class="eyebrow">PULL REQUESTS</p>
+      <h2>Real reviews, same view, whole conversation</h2>
+      <p>Press <span class="k">p</span> to browse the repo's open PRs (GitHub)
+      or MRs (GitLab). Threads sit under the exact lines they were written on
+      — reply, resolve, comment without leaving the terminal.</p>
+      <p><span class="dim">Auth is the official CLIs —</span>
+      <span class="k">gh</span> <span class="dim">and</span> <span class="k">glab</span>
+      <span class="dim">— so Enterprise and self-managed hosts just work.</span></p>
+    </div>
+    <div class="term">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="name">drift --pr 42</span></div>
+      <div class="body">
+        <div class="hdr">#42 receipt shows item count — <b>mia/receipt-count</b></div>
+        <div class="cols">
+          <div class="code" style="padding-left:14px">
+            <div class="row"><span class="g">25</span><span>    <span class="kw">const</span> <span class="pr">subtotal</span> <span class="op">=</span> <span class="ty">this</span><span class="pu">.</span><span class="fn">total</span><span class="br">()</span><span class="pu">;</span></span></div>
+            <div class="row add"><span class="g a">26</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Subtotal (</span><span class="pu">${</span><span class="ty">this</span><span class="pu">.</span><span class="pr">items</span><span class="pu">.</span><span class="pr">length</span><span class="pu">}</span><span class="st"> items): …`</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="thread">
+              <div class="q"><span class="who">● mia</span> <span class="when">· 2026-07-28</span><br>should this use the cached total instead of recomputing?</div>
+              <div class="hint">[a] reply · [r] resolve · [d] delete</div>
+            </div>
+            <div class="row"><span class="g">27</span><span>    <span class="kw">return</span> <span class="pr">lines</span><span class="pu">.</span><span class="fn">join</span><span class="br">(</span><span class="st">"\n"</span><span class="br">)</span><span class="pu">;</span></span></div>
+          </div>
+        </div>
+        <div class="sb"><span class="seg">pr #42</span><span>a comment · r resolve · p back to list</span></div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <section class="feature flip screen" id="ai">
+    <div class="feature-body">
+    <div class="txt">
+      <p class="eyebrow">AI AGENTS</p>
+      <h2>Send any line straight to your Claude session</h2>
+      <p>Select lines, press <span class="k">s</span>, type an instruction —
+      the prompt lands in the Claude Code (or Codex, or any agent) pane beside
+      drift, with the file location and the diff attached.</p>
+      <p><span class="dim">Works through</span> <a href="https://herdr.dev">herdr</a><span class="dim">;
+      the agent split next to drift is picked automatically, and</span>
+      <span class="k">↑</span><span class="k">↓</span> <span class="dim">switch sessions while you type.</span></p>
+    </div>
+    <div class="term">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="name">drift · claude code — herdr</span></div>
+      <div class="body ai-body">
+        <div class="cols">
+          <div class="code" style="padding-left:14px">
+            <div class="row"><span class="g">25</span><span>    <span class="kw">const</span> <span class="pr">subtotal</span> <span class="op">=</span> <span class="ty">this</span><span class="pu">.</span><span class="fn">total</span><span class="br">()</span><span class="pu">;</span></span></div>
+            <div class="row sel del"><span class="g r">26</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Subtotal: …`</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row sel add"><span class="g a">26</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Subtotal (…items): …`</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g">27</span><span>    <span class="kw">return</span> <span class="pr">lines</span><span class="pu">.</span><span class="fn">join</span><span class="br">(</span><span class="st">"\n"</span><span class="br">)</span><span class="pu">;</span></span></div>
+            <div class="row"><span class="g"> </span><span> </span></div>
+            <div class="row"><span class="g"> </span><span> </span></div>
+            <div class="row"><span class="g"> </span><span> </span></div>
+            <div class="row"><span class="g"> </span><span> </span></div>
+          </div>
+        </div>
+        <div class="compose" aria-hidden="true">
+          <div class="ct">prompt → claude · this tab · idle</div>
+          <div class="cline"><span class="typed">explain this change</span></div>
+          <div class="cfoot"><span class="key">enter</span> send · <span class="key">↑↓</span> session · <span class="key">esc</span> cancel</div>
+        </div>
+        <div class="sb"><span class="vis"> VISUAL </span><span>y copy · s send · esc cancel</span><span class="notice ai-sent">sent to claude (this tab)</span></div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="./">drift<i>_</i></a>
+    <a href="docs.html">docs</a>
+    <a href="https://github.com/tothalex/drift">github</a>
+    <span class="right">MIT · built for the terminal</span>
+  </div>
+</footer>
+
+<script>
+  document.documentElement.classList.add("js");
+
+  // The logo takes you home: back to the top, bare URL. (scrollIntoView
+  // on the snap-aligned hero — mandatory snap cancels plain scrollTo.)
+  document.querySelectorAll(".brand").forEach(function (a) {
+    a.addEventListener("click", function (event) {
+      event.preventDefault();
+      var hero = document.querySelector(".hero");
+      if (hero) hero.scrollIntoView({ behavior: "smooth", block: "start" });
+      history.replaceState(null, "", location.pathname + location.search);
+    });
+  });
+
+  document.querySelectorAll("[data-copy]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      navigator.clipboard.writeText(btn.dataset.copy).then(function () {
+        btn.textContent = "copied ✓";
+        btn.classList.add("ok");
+        setTimeout(function () {
+          btn.textContent = "copy";
+          btn.classList.remove("ok");
+        }, 1600);
+      });
+    });
+  });
+
+  // Scrollspy: light the nav link of the section on screen.
+  var links = Array.prototype.slice.call(
+    document.querySelectorAll('.nav nav a[href^="#"]')
+  );
+  var byId = {};
+  links.forEach(function (a) { byId[a.hash.slice(1)] = a; });
+  var spy = new IntersectionObserver(
+    function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        links.forEach(function (a) { a.classList.remove("active"); });
+        var link = byId[entry.target.id];
+        if (link) link.classList.add("active");
+        // Keep the URL pointing at the section on screen (no history
+        // entries, no scroll jump).
+        if (location.hash !== "#" + entry.target.id) {
+          history.replaceState(null, "", "#" + entry.target.id);
+        }
+      });
+    },
+    { rootMargin: "-45% 0px -45% 0px" }
+  );
+  ["diff", "themes", "pr", "ai"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) spy.observe(el);
+  });
+  // Back on the hero: no section is active.
+  var hero = document.querySelector(".hero");
+  if (hero) {
+    new IntersectionObserver(
+      function (entries) {
+        if (entries[0].isIntersecting) {
+          links.forEach(function (a) { a.classList.remove("active"); });
+          // Back on top: a bare URL again.
+          if (location.hash) {
+            history.replaceState(null, "", location.pathname + location.search);
+          }
+        }
+      },
+      { rootMargin: "-45% 0px -45% 0px" }
+    ).observe(hero);
+  }
+
+  // Reveal each feature as it arrives.
+  var reveal = new IntersectionObserver(
+    function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("in");
+          reveal.unobserve(entry.target);
+        }
+      });
+    },
+    { threshold: 0.25 }
+  );
+  document.querySelectorAll(".feature-body").forEach(function (el) {
+    reveal.observe(el);
+  });
+  var themed = document.getElementById("themed");
+  themed.querySelectorAll("[data-th]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      themed.dataset.theme = btn.dataset.th;
+      themed.querySelectorAll("[data-th]").forEach(function (b) {
+        b.setAttribute("aria-pressed", String(b === btn));
+      });
+    });
+  });
+</script>
+</body>
 </html>
