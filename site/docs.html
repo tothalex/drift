@@ -72,7 +72,11 @@
   .nav nav a[aria-current="page"] { color: var(--fg-bright); border-bottom-color: var(--green); }
 
   /* ------- docs layout: sticky toc + content ------- */
-  .docs { display: grid; grid-template-columns: 200px 1fr; gap: 56px; padding: 48px 0 96px; }
+  /* minmax(0, …): fr's automatic minimum is content min-content, and
+     the reference tables and command blocks are wider than a phone. */
+  /* Vertical padding only: .docs shares its element with .wrap, whose
+     side padding must survive (the shorthand would zero it). */
+  .docs { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 56px; padding-top: 48px; padding-bottom: 96px; }
   .toc { position: sticky; top: 86px; align-self: start; font-size: 13.5px; }
   .toc p { font-family: var(--mono); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; color: var(--muted); margin-bottom: 10px; }
   .toc a {
@@ -141,10 +145,26 @@
   footer .right { margin-left: auto; }
 
   @media (max-width: 820px) {
-    .docs { grid-template-columns: 1fr; gap: 24px; }
+    .docs { grid-template-columns: minmax(0, 1fr); gap: 24px; }
     .toc { position: static; display: flex; flex-wrap: wrap; gap: 2px 14px; }
     .toc p { width: 100%; }
     .toc a, .toc a.sub { border-left: none; padding: 2px 0; }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px; }
+    /* The nav keeps what leads elsewhere (docs, github) and drops the
+       landing page's section anchors. */
+    .nav .wrap { gap: 16px; }
+    .nav nav { gap: 14px; }
+    .nav nav a { padding: 8px 0; }
+    .nav nav a[href^="./#"] { display: none; }
+    .docs { padding-top: 32px; padding-bottom: 64px; }
+    main h1 { font-size: 25px; }
+    h2 { font-size: 19px; }
+    /* Reference tables and command blocks scroll inside their own box;
+       the page itself never pans sideways. */
+    table { display: block; overflow-x: auto; }
+    pre { font-size: 12px; padding: 12px 14px; }
   }
 </style>
 </head>
@@ -366,8 +386,8 @@
       <p>The same works from the command line. Installing needs
       <code>git</code> and a C compiler — the only place drift uses
       either.</p>
-      <pre><span class="p">$</span> drift lang install rust    <span class="c"># curated: c, go, java, javascript, json,</span>
-<span class="c">                             #   python, ruby, rust, toml, tsx, typescript</span>
+      <pre><span class="p">$</span> drift lang install rust    <span class="c"># curated: c, css, go, html, java, javascript,</span>
+<span class="c">                             #   json, python, ruby, rust, toml, tsx, typescript</span>
 <span class="p">$</span> drift lang install https://github.com/tree-sitter-grammars/tree-sitter-zig
 <span class="p">$</span> drift lang list            <span class="c"># installed and installable</span>
 <span class="p">$</span> drift lang build           <span class="c"># rebuild grammars (after a drift upgrade)</span>

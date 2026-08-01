@@ -47,8 +47,13 @@
     min-height: calc(100vh - 54px);
     min-height: calc(100svh - 54px);
     display: grid; align-content: center;
+    /* The track never exceeds the viewport: grid items would otherwise
+       refuse to shrink below the terminal demos' monospace min-content
+       (min-width: auto), and the page itself would pan sideways. */
+    grid-template-columns: minmax(0, 1fr);
     scroll-snap-align: start; scroll-margin-top: 54px;
   }
+  .screen > * { min-width: 0; }
   body {
     background: var(--bg);
     color: var(--fg);
@@ -70,7 +75,9 @@
   a { color: var(--thread); text-decoration: none; }
   a:hover { text-decoration: underline; }
   a:focus-visible, button:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  /* width 100%: the auto margins would otherwise switch grid items to
+     fit-content sizing, floored by the demos' monospace min-content. */
+  .wrap { width: 100%; max-width: 1080px; margin: 0 auto; padding: 0 24px; }
 
   /* ------- nav ------- */
   .nav {
@@ -109,7 +116,10 @@
   .hero h1 em { font-style: normal; color: var(--green); white-space: nowrap; }
   /* Below the demo: what it is (left) and how to get it (right). The
      install box is sized by its command; the description takes the rest. */
-  .hero-cta { margin-top: 24px; display: grid; grid-template-columns: 1fr auto; gap: 48px; align-items: center; }
+  /* minmax(0, …) everywhere a track is fr-sized: fr's automatic minimum
+     is the content's min-content, which for the nowrap install command
+     and the demos is wider than a phone. */
+  .hero-cta { margin-top: 24px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 48px; align-items: center; }
   .hero .sub { font-size: 15.5px; color: var(--muted); max-width: 58ch; }
   .hero .sub b { color: var(--fg); font-weight: 500; }
 
@@ -219,12 +229,12 @@
   .features { padding: 0; }
   .feature { padding: 24px 0; }
   .feature-body {
-    display: grid; grid-template-columns: 4fr 6fr; gap: 56px;
+    display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); gap: 56px;
     align-items: center;
     border-left: 3px solid var(--accent, var(--line));
     padding-left: 32px;
   }
-  .feature.flip .feature-body { grid-template-columns: 6fr 4fr; }
+  .feature.flip .feature-body { grid-template-columns: minmax(0, 6fr) minmax(0, 4fr); }
   .feature.flip .txt { order: 2; }
   .feature .eyebrow {
     font-family: var(--mono); font-size: 12px; font-weight: 700;
@@ -326,11 +336,34 @@
   footer .right { margin-left: auto; }
 
   @media (max-width: 880px) {
-    .hero-cta, .feature-body, .feature.flip .feature-body { grid-template-columns: 1fr; gap: 28px; }
+    /* Stacked text + demo outgrows one viewport: snapping between
+       whole sections would fight the scroll, so sections flow free
+       and content-sized instead of viewport-sized. */
+    html { scroll-snap-type: none; }
+    .screen { min-height: 0; padding: 44px 0; }
+    .hero.screen { padding-top: 16px; }
+    .hero .term { flex: none; }
+    .hero-cta, .feature-body, .feature.flip .feature-body { grid-template-columns: minmax(0, 1fr); gap: 28px; }
     .feature.flip .txt { order: 0; }
     .feature-body { padding-left: 20px; }
     .tree { display: none; }
     .cols { min-width: 0; }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px; }
+    /* On a phone, scrolling is the section navigation: the nav keeps
+       what leads elsewhere (docs, github) and drops the anchors. */
+    .nav .wrap { gap: 16px; }
+    .nav nav { gap: 14px; }
+    .nav nav a { padding: 8px 0; }
+    .nav nav a[href^="#"] { display: none; }
+    .feature h2 { font-size: 22px; }
+    /* The demos stay true terminals: smaller type, tighter gutters,
+       and long lines pan inside the pane — they never wrap. */
+    .term, .hero .term { font-size: 11px; }
+    .row .g { width: 4ch; }
+    .install { padding: 12px 12px; gap: 10px; }
+    footer .wrap { padding: 22px 16px; row-gap: 10px; }
   }
 </style>
 </head>
@@ -624,7 +657,10 @@
     ).observe(hero);
   }
 
-  // Reveal each feature as it arrives.
+  // Reveal each feature as it arrives. Trigger on entering the viewport
+  // (inset a little), never on a visibility fraction: on phones a
+  // stacked section is taller than the screen, so a fraction like 25%
+  // may never be visible at once and the section would stay hidden.
   var reveal = new IntersectionObserver(
     function (entries) {
       entries.forEach(function (entry) {
@@ -634,7 +670,7 @@
         }
       });
     },
-    { threshold: 0.25 }
+    { rootMargin: "0px 0px -120px 0px" }
   );
   document.querySelectorAll(".feature-body").forEach(function (el) {
     reveal.observe(el);
