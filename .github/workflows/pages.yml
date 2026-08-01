@@ -35,7 +35,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp site/index.html _site/
+          cp -R site/. _site/
           cp install.sh _site/
 
       - uses: actions/upload-pages-artifact@v3
