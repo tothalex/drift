@@ -25,7 +25,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
-            " y copy · esc cancel ",
+            " y copy · s send · esc cancel ",
             Style::default().fg(theme.muted),
         ));
     }

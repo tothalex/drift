@@ -7,6 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::App;
+use crate::app::compose::ComposeKind;
 use crate::processor::view::char_to_byte;
 use crate::ui::draw_panel;
 
@@ -63,8 +64,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
     } else {
         "alt-enter"
     };
+    // With several agent sessions open, ↑/↓ re-aim the prompt.
+    let cycle = match &compose.kind {
+        ComposeKind::Agent { targets, .. } if targets.len() > 1 => " · ↑↓ session",
+        _ => "",
+    };
     lines.push(Line::from(Span::styled(
-        format!("   enter post · {newline_key} newline · esc cancel"),
+        format!(
+            "   enter {}{cycle} · {newline_key} newline · esc cancel",
+            compose.kind.verb()
+        ),
         dim,
     )));
 

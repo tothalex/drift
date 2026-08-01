@@ -1,6 +1,7 @@
 pub mod app;
 pub mod cli;
 pub mod config;
+pub mod connect;
 pub mod events;
 pub mod forge;
 pub mod keymap;

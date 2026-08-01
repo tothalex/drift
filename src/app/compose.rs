@@ -1,13 +1,46 @@
-//! The integrated comment composer: a small multi-line text box drawn
-//! over the app, so writing a review comment never leaves the TUI. The
-//! buffer is plain text with a char-offset cursor; display wrapping is
-//! computed here so the renderer and cursor can never disagree.
+//! The integrated text composer: a small multi-line text box drawn over
+//! the app, so writing a review comment or an agent prompt never leaves
+//! the TUI. The buffer is plain text with a char-offset cursor; display
+//! wrapping is computed here so the renderer and cursor can never
+//! disagree.
 
+use crate::connect::{AgentTarget, SendContext};
 use crate::forge::model::ComposeTarget;
 use crate::processor::view::char_to_byte;
 
+/// What the composed text becomes: a forge comment, or a prompt sent to
+/// an AI agent pane.
+pub enum ComposeKind {
+    Comment(ComposeTarget),
+    Agent {
+        /// Every agent the prompt could go to — ↑/↓ cycle through them
+        /// while composing — with `current` the one it will go to.
+        targets: Vec<AgentTarget>,
+        current: usize,
+        ctx: SendContext,
+    },
+}
+
+impl ComposeKind {
+    /// UI copy: what the text is ("comment" / "prompt")…
+    pub fn noun(&self) -> &'static str {
+        match self {
+            ComposeKind::Comment(_) => "comment",
+            ComposeKind::Agent { .. } => "prompt",
+        }
+    }
+
+    /// …and what enter does with it ("post" / "send").
+    pub fn verb(&self) -> &'static str {
+        match self {
+            ComposeKind::Comment(_) => "post",
+            ComposeKind::Agent { .. } => "send",
+        }
+    }
+}
+
 pub struct Compose {
-    pub target: ComposeTarget,
+    pub kind: ComposeKind,
     /// Panel title, e.g. "reply to mia".
     pub title: String,
     text: String,
@@ -16,18 +49,36 @@ pub struct Compose {
 }
 
 impl Compose {
-    pub fn new(target: ComposeTarget, title: String) -> Compose {
+    pub fn new(kind: ComposeKind, title: String) -> Compose {
         Compose {
-            target,
+            kind,
             title,
             text: String::new(),
             cursor: 0,
         }
     }
 
-    /// The trimmed body and its target; empty means cancelled.
-    pub fn into_body(self) -> (ComposeTarget, String) {
-        (self.target, self.text.trim().to_string())
+    /// The trimmed body and what it's for; empty means cancelled.
+    pub fn into_body(self) -> (ComposeKind, String) {
+        (self.kind, self.text.trim().to_string())
+    }
+
+    /// Agent prompts only: step to the next/previous agent session and
+    /// retitle the panel; the prompt text stays as typed. (In agent
+    /// mode ↑/↓ do this instead of moving the text cursor.)
+    pub fn cycle_target(&mut self, delta: isize) {
+        let ComposeKind::Agent {
+            targets, current, ..
+        } = &mut self.kind
+        else {
+            return;
+        };
+        if targets.len() < 2 {
+            return;
+        }
+        let len = targets.len() as isize;
+        *current = (*current as isize + delta).rem_euclid(len) as usize;
+        self.title = format!("prompt → {}", targets[*current].label());
     }
 
     pub fn insert(&mut self, ch: char) {
@@ -163,7 +214,7 @@ mod tests {
 
     fn compose(text: &str, cursor: usize) -> Compose {
         Compose {
-            target: ComposeTarget::General,
+            kind: ComposeKind::Comment(ComposeTarget::General),
             title: String::new(),
             text: text.to_string(),
             cursor,
@@ -223,6 +274,43 @@ mod tests {
         let (rows, cursor) = c.rows(4);
         assert_eq!(rows, vec!["ab", "", "cd"]);
         assert_eq!(cursor, (1, 0));
+    }
+
+    #[test]
+    fn cycling_targets_wraps_and_retitles() {
+        use crate::connect::Place;
+        let target = |name: &str, where_label: &str| AgentTarget {
+            name: name.to_string(),
+            id: name.to_string(),
+            status: "idle".to_string(),
+            place: Place::Elsewhere,
+            where_label: where_label.to_string(),
+        };
+        let mut c = Compose::new(
+            ComposeKind::Agent {
+                targets: vec![target("claude", "this tab"), target("codex", "api:1")],
+                current: 0,
+                ctx: SendContext {
+                    file: String::new(),
+                    rel: String::new(),
+                    start: 1,
+                    end: 1,
+                    code: String::new(),
+                },
+            },
+            "prompt → claude · this tab · idle".to_string(),
+        );
+        c.cycle_target(1);
+        assert_eq!(c.title, "prompt → codex · api:1 · idle");
+        // Wraps around in both directions.
+        c.cycle_target(1);
+        assert_eq!(c.title, "prompt → claude · this tab · idle");
+        c.cycle_target(-1);
+        assert_eq!(c.title, "prompt → codex · api:1 · idle");
+        // A comment composer is unaffected.
+        let mut c = compose("body", 0);
+        c.cycle_target(1);
+        assert!(c.title.is_empty());
     }
 
     #[test]

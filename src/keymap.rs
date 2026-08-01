@@ -34,6 +34,7 @@ pub enum Action {
     UncheckLast,
     Visual,
     Yank,
+    AgentSend,
     CopyPath,
     ToggleTree,
     GrowTree,
@@ -75,6 +76,7 @@ pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("uncheck_last", Action::UncheckLast, &["X"]),
     ("visual", Action::Visual, &["v"]),
     ("yank", Action::Yank, &["y"]),
+    ("agent_send", Action::AgentSend, &["s"]),
     ("toggle_tree", Action::ToggleTree, &["t"]),
     ("grow_tree", Action::GrowTree, &[">"]),
     ("shrink_tree", Action::ShrinkTree, &["<"]),
@@ -207,6 +209,7 @@ const HELP: &[(&[Action], &str)] = &[
         "jump to top / bottom (10G: line 10)",
     ),
     (&[Action::Yank], "copy line / selection"),
+    (&[Action::AgentSend], "send line / selection to an AI agent"),
     (&[Action::CopyPath], "copy the file path"),
     (&[Action::Visual], "select lines (visual mode)"),
     (

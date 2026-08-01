@@ -42,6 +42,15 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 .collect(),
             picker.cursor,
         ),
+        Picker::Agent(picker) => (
+            "send to",
+            picker
+                .rows
+                .iter()
+                .map(|(label, current)| (label.as_str(), *current))
+                .collect(),
+            picker.cursor,
+        ),
     };
 
     let area = frame.area();

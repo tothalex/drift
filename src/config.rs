@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
+use crate::connect::{AgentConfig, Backend, TEMPLATE_DEFAULT};
 use crate::forge::ForgeConfig;
 use crate::keymap::{KEY_DEFAULTS, Keymap};
 use crate::theme::{THEME_DEFAULTS, THEME_LANG_DEFAULTS, Theme};
@@ -34,6 +35,9 @@ struct ConfigFile {
     /// Pull-request integration; see [`ForgeSection`].
     #[serde(default)]
     forge: ForgeSection,
+    /// Send-to-agent integration; see [`AgentSection`].
+    #[serde(default)]
+    agent: AgentSection,
     #[serde(default)]
     keys: HashMap<String, Vec<String>>,
     /// Flat color entries plus `[theme.<lang>]` per-language sub-tables,
@@ -72,6 +76,42 @@ impl ForgeSection {
     }
 }
 
+/// The `[agent]` section: sending code to an AI agent pane through the
+/// surrounding multiplexer.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentSection {
+    /// "auto" | "herdr" | "off" — auto uses the multiplexer drift runs
+    /// inside; naming one forces it even from outside.
+    #[serde(default)]
+    backend: Option<String>,
+    /// Pin the target: an agent name ("claude") or pane id.
+    #[serde(default)]
+    target: Option<String>,
+    /// Press enter in the agent pane after inserting the prompt.
+    #[serde(default)]
+    submit: Option<bool>,
+    /// Prompt template; {input}, {file} (absolute), {relfile}, {lines},
+    /// {start}, {end} and {code} are substituted.
+    #[serde(default)]
+    template: Option<String>,
+}
+
+impl AgentSection {
+    fn into_config(self) -> Result<AgentConfig> {
+        Ok(AgentConfig {
+            // The known names live with the backend registry, so a new
+            // backend never touches this file.
+            backend: Backend::parse(self.backend.as_deref())?,
+            target: self.target.filter(|t| !t.is_empty()),
+            submit: self.submit.unwrap_or(true),
+            template: self
+                .template
+                .unwrap_or_else(|| TEMPLATE_DEFAULT.to_string()),
+        })
+    }
+}
+
 /// Per-language theme sections: language name → key → color string.
 type LangThemes = HashMap<String, HashMap<String, String>>;
 
@@ -106,6 +146,7 @@ pub struct Config {
     pub base: Option<String>,
     pub editor: String,
     pub forge: ForgeConfig,
+    pub agent: AgentConfig,
     pub keymap: Keymap,
     pub theme: Theme,
 }
@@ -156,10 +197,15 @@ fn load_at(path: &Path) -> Result<Config> {
         .forge
         .into_config()
         .with_context(|| format!("invalid [forge] in {}", path.display()))?;
+    let agent = file
+        .agent
+        .into_config()
+        .with_context(|| format!("invalid [agent] in {}", path.display()))?;
     Ok(Config {
         base: file.base,
         editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
         forge,
+        agent,
         keymap,
         theme,
     })
@@ -228,7 +274,19 @@ pub fn default_toml() -> String {
          # [forge]\n\
          # kind = \"github\"          # or \"gitlab\"\n\
          # gh = \"/path/to/gh\"       # binary overrides\n\
-         # glab = \"/path/to/glab\"\n\n[keys]\n",
+         # glab = \"/path/to/glab\"\n\n\
+         # Send the current line or visual selection to an AI agent pane\n\
+         # (the s key): the prompt you type lands in a running claude/\n\
+         # codex/… CLI in a sibling pane of the herdr multiplexer. With\n\
+         # \"auto\", drift must run inside herdr; backend = \"herdr\" forces\n\
+         # it from any terminal. In the template, {input} is the typed\n\
+         # prompt; {file} (absolute path), {relfile} (repo-relative),\n\
+         # {lines}, {start}, {end} and {code} describe the selection.\n\
+         # [agent]\n\
+         # backend = \"auto\"         # auto | herdr | off\n\
+         # target = \"\"              # pin an agent name or pane id\n\
+         # submit = true            # press enter after inserting\n\
+         # template = \"{input}\\n\\n{file}:{lines}\\n```\\n{code}\\n```\"\n\n[keys]\n",
     );
     for (name, _, keys) in KEY_DEFAULTS {
         let list = keys
@@ -332,6 +390,33 @@ mod tests {
         let err = load_at(&config_path).err().expect("must fail").to_string();
         assert!(err.contains("unknown colorscheme 'nope'"), "{err}");
         assert!(err.contains("onedark"), "{err}");
+    }
+
+    #[test]
+    fn agent_section_parses_and_validates_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "[agent]\nbackend = \"herdr\"\ntarget = \"claude\"\nsubmit = false\n",
+        )
+        .unwrap();
+        let config = load_at(&config_path).unwrap();
+        assert_eq!(config.agent.backend, Backend::Herdr);
+        assert_eq!(config.agent.target.as_deref(), Some("claude"));
+        assert!(!config.agent.submit);
+        assert_eq!(config.agent.template, TEMPLATE_DEFAULT);
+
+        // Defaults without the section: auto, submit, no pin.
+        std::fs::write(&config_path, "").unwrap();
+        let config = load_at(&config_path).unwrap();
+        assert_eq!(config.agent.backend, Backend::Auto);
+        assert!(config.agent.submit);
+        assert!(config.agent.target.is_none());
+
+        std::fs::write(&config_path, "[agent]\nbackend = \"tmux\"\n").unwrap();
+        let err = load_at(&config_path).err().expect("must fail").to_string();
+        assert!(err.contains("invalid [agent]"), "{err}");
     }
 
     #[test]

@@ -29,6 +29,7 @@ use ratatui::DefaultTerminal;
 use ratatui::layout::Position;
 
 use crate::config::Config;
+use crate::connect::{self, AgentTarget, SendContext};
 use crate::events::{
     AppEvent, INPUT_POLL_MS, RefreshedComments, pop_keyboard_enhancement,
     push_keyboard_enhancement, spawn_input_thread, spawn_watcher_thread,
@@ -43,10 +44,10 @@ use crate::vcs::model::{ChangedFile, Comparison, LineKind, Scope};
 use crate::vcs::{self, Vcs};
 
 use code_view::{CodeView, TextPos};
-use compose::Compose;
+use compose::{Compose, ComposeKind};
 use panes::PaneLayout;
 use picker::pr_label;
-pub use picker::{BasePicker, Picker, PrPicker, ScopePicker};
+pub use picker::{AgentPicker, BasePicker, Picker, PrPicker, ScopePicker};
 use pr::PrSession;
 use review::Review;
 use tree_nav::TreeNav;
@@ -178,6 +179,11 @@ pub struct App {
     pr: Option<PrSession>,
     /// Editor command template ({file}/{line} placeholders).
     editor: String,
+    /// The `[agent]` config: sending code to an AI agent pane.
+    agent_config: connect::AgentConfig,
+    /// Pane id of the last agent a prompt went to: the next `s` aims
+    /// there directly, for as long as that pane exists.
+    agent_last: Option<String>,
     /// While set, the input thread stops reading the terminal — an
     /// external editor owns it.
     input_paused: Arc<AtomicBool>,
@@ -232,6 +238,8 @@ impl App {
             spinner_running: Arc::new(AtomicBool::new(false)),
             pr: None,
             editor: config.editor,
+            agent_config: config.agent,
+            agent_last: None,
             input_paused: Arc::new(AtomicBool::new(false)),
             pending_editor: None,
             compose: None,
@@ -700,6 +708,7 @@ impl App {
             Action::UncheckLast => self.uncheck_last()?,
             Action::Visual => self.code.toggle_visual(),
             Action::Yank => self.yank(),
+            Action::AgentSend => self.request_agent_send(),
             Action::CopyPath => self.copy_path(),
             Action::GrowTree => self.layout.resize(2 * count),
             Action::ShrinkTree => self.layout.resize(-2 * count),
@@ -780,6 +789,10 @@ impl App {
                         self.open_pr(item.number);
                     }
                 }
+                Some(Picker::Agent(picker)) if picker.cursor < picker.targets.len() => {
+                    self.open_agent_compose(picker.targets, picker.cursor, picker.ctx);
+                }
+                Some(Picker::Agent(_)) => {}
                 None => {}
             },
             _ => {}
@@ -1177,7 +1190,7 @@ impl App {
             return;
         };
         let title = self.compose_hint(&target);
-        self.compose = Some(Compose::new(target, title));
+        self.compose = Some(Compose::new(ComposeKind::Comment(target), title));
     }
 
     /// All keys go to the composer while it's open: printable characters
@@ -1194,11 +1207,22 @@ impl App {
             .modifiers
             .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
         if key.code == KeyCode::Enter && !newline_modifier {
-            let (target, body) = self.compose.take().expect("composing").into_body();
+            let (kind, body) = self.compose.take().expect("composing").into_body();
             if body.is_empty() {
-                self.notice = Some("comment discarded (empty)".to_string());
-            } else {
-                self.post_comment(target, body);
+                self.notice = Some(format!("{} discarded (empty)", kind.noun()));
+                return;
+            }
+            match kind {
+                ComposeKind::Comment(target) => self.post_comment(target, body),
+                ComposeKind::Agent {
+                    targets,
+                    current,
+                    ctx,
+                } => {
+                    if let Some(target) = targets.into_iter().nth(current) {
+                        self.send_agent_prompt(target, ctx, body);
+                    }
+                }
             }
             return;
         }
@@ -1207,16 +1231,25 @@ impl App {
         };
         match key.code {
             KeyCode::Esc => {
+                let noun = compose.kind.noun();
                 self.compose = None;
-                self.notice = Some("comment discarded".to_string());
+                self.notice = Some(format!("{noun} discarded"));
             }
             KeyCode::Enter => compose.insert('\n'),
             KeyCode::Backspace => compose.backspace(),
             KeyCode::Delete => compose.delete(),
             KeyCode::Left => compose.left(),
             KeyCode::Right => compose.right(),
-            KeyCode::Up => compose.vertical(-1),
-            KeyCode::Down => compose.vertical(1),
+            // Composing an agent prompt, ↑/↓ pick the session it goes
+            // to; the text cursor still has ←/→/home/end.
+            KeyCode::Up => match compose.kind {
+                ComposeKind::Agent { .. } => compose.cycle_target(-1),
+                ComposeKind::Comment(_) => compose.vertical(-1),
+            },
+            KeyCode::Down => match compose.kind {
+                ComposeKind::Agent { .. } => compose.cycle_target(1),
+                ComposeKind::Comment(_) => compose.vertical(1),
+            },
             KeyCode::Home => compose.home(),
             KeyCode::End => compose.end(),
             // Tabs render zero-width in the terminal; use spaces.
@@ -2024,6 +2057,187 @@ impl App {
             .join("\n")
     }
 
+    // --- sending to an AI agent pane ---
+
+    /// `s`: capture the current line or the visual selection (which this
+    /// ends, like yank) and queue the prompt composer — via the target
+    /// picker when several agent panes are open.
+    fn request_agent_send(&mut self) {
+        if self.agent_config.backend == connect::Backend::Off {
+            self.notice = Some("agent sending is off ([agent] in the config)".to_string());
+            return;
+        }
+        let Some(file) = self.current_file() else {
+            self.notice = Some("no file to send from".to_string());
+            return;
+        };
+        if pr::is_conversation(file) {
+            self.notice = Some("the conversation is not code".to_string());
+            return;
+        }
+        let rel = file.path.display().to_string();
+        // The VCS root may be relative ("."): the agent pane can have any
+        // cwd, so the prompt needs a genuinely absolute location.
+        let joined = self.vcs.root().join(&file.path);
+        let abs = std::path::absolute(&joined)
+            .unwrap_or(joined)
+            .display()
+            .to_string();
+        let (from, to) = match self.code.select_anchor.take() {
+            Some(anchor) => (anchor.min(self.code.cursor), anchor.max(self.code.cursor)),
+            None => (self.code.cursor, self.code.cursor),
+        };
+        let code = self.view_text_for_prompt(from, to);
+        if code.trim().is_empty() {
+            self.notice = Some("nothing to send here".to_string());
+            return;
+        }
+        let (start, end) = match self.current_view() {
+            Some(view) => {
+                let start = view.lineno_at(from).unwrap_or(1);
+                (start, view.lineno_at(to).unwrap_or(start))
+            }
+            None => (1, 1),
+        };
+        let ctx = SendContext {
+            file: abs,
+            rel,
+            start,
+            end,
+            code,
+        };
+        let Some(bridge) = connect::detect(&self.agent_config) else {
+            self.notice = Some(
+                "no agent connector — run drift inside herdr (or set [agent] backend)".to_string(),
+            );
+            return;
+        };
+        let targets = match bridge.targets() {
+            Ok(targets) => targets,
+            Err(err) => {
+                self.notice = Some(format!("{err:#}"));
+                return;
+            }
+        };
+        // A pinned target skips the picker entirely.
+        if let Some(pin) = self.agent_config.target.clone() {
+            match targets.iter().position(|t| t.id == pin || t.name == pin) {
+                Some(pos) => self.open_agent_compose(targets, pos, ctx),
+                None => self.notice = Some(format!("agent target '{pin}' has no pane")),
+            }
+            return;
+        }
+        match targets.len() {
+            0 => {
+                self.notice =
+                    Some("no agent pane — start claude/codex/… in another pane".to_string());
+            }
+            1 => self.open_agent_compose(targets, 0, ctx),
+            _ => {
+                // A session already sent to keeps the aim — switching
+                // targets is a choice, not something every `s` should
+                // redo. Only its pane going away resets it.
+                if let Some(pos) = self
+                    .agent_last
+                    .as_deref()
+                    .and_then(|last| targets.iter().position(|target| target.id == last))
+                {
+                    self.open_agent_compose(targets, pos, ctx);
+                    return;
+                }
+                // An agent split in drift's own tab is the unambiguous
+                // intent — the drift-beside-claude workflow needs no
+                // picker even when other agents run elsewhere. (↑/↓ in
+                // the composer still reach the rest.)
+                let only_here = {
+                    let mut here = targets
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, t)| t.place == connect::Place::SameTab);
+                    match (here.next(), here.next()) {
+                        (Some((pos, _)), None) => Some(pos),
+                        _ => None,
+                    }
+                };
+                if let Some(pos) = only_here {
+                    self.open_agent_compose(targets, pos, ctx);
+                    return;
+                }
+                let last = self.agent_last.as_deref();
+                let rows = targets
+                    .iter()
+                    .map(|t| (t.label(), Some(t.id.as_str()) == last))
+                    .collect();
+                let cursor = targets
+                    .iter()
+                    .position(|t| Some(t.id.as_str()) == last)
+                    .unwrap_or(0);
+                self.picker = Some(Picker::Agent(AgentPicker {
+                    rows,
+                    targets,
+                    ctx,
+                    cursor,
+                }));
+            }
+        }
+    }
+
+    /// Like [`Self::view_text`], but when the rows cover a change each
+    /// row carries its unified-diff sigil (`-`/`+`, space for context)
+    /// so the agent can tell the old line from the new. A selection of
+    /// unchanged code stays plain.
+    fn view_text_for_prompt(&self, from: usize, to: usize) -> String {
+        let Some(view) = self.current_view() else {
+            return String::new();
+        };
+        let rows: Vec<(Option<LineKind>, &str)> = view
+            .flat_lines()
+            .enumerate()
+            .filter(|(index, _)| (from..=to).contains(index))
+            .filter_map(|(_, flat)| match flat {
+                FlatLine::Separator => Some((None, "")),
+                FlatLine::Line(ViewLine::Diff { line, .. }) => {
+                    Some((Some(line.kind), line.content.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        mark_changed_rows(&rows)
+    }
+
+    /// Open the prompt composer aimed at `targets[current]`; the whole
+    /// list rides along so ↑/↓ can re-aim it while composing.
+    fn open_agent_compose(&mut self, targets: Vec<AgentTarget>, current: usize, ctx: SendContext) {
+        // The full label ("claude · this tab · idle") says where the
+        // prompt is going before it's typed.
+        let title = format!("prompt → {}", targets[current].label());
+        self.compose = Some(Compose::new(
+            ComposeKind::Agent {
+                targets,
+                current,
+                ctx,
+            },
+            title,
+        ));
+    }
+
+    /// Fill the template and type the prompt into the agent's pane.
+    fn send_agent_prompt(&mut self, target: AgentTarget, ctx: SendContext, input: String) {
+        let Some(bridge) = connect::detect(&self.agent_config) else {
+            return; // it existed when the composer opened
+        };
+        let text = connect::format_prompt(&self.agent_config.template, &input, &ctx);
+        self.notice = Some(
+            match bridge.send(&target.id, &text, self.agent_config.submit) {
+                Ok(()) => {
+                    self.agent_last = Some(target.id.clone());
+                    format!("sent to {} ({})", target.name, target.where_label)
+                }
+                Err(err) => format!("send failed: {err:#}"),
+            },
+        );
+    }
+
     /// Screen position → (view line, char column); the gutter columns map
     /// to char 0.
     fn position_to_text(&self, position: Position) -> TextPos {
@@ -2116,6 +2330,26 @@ fn scan_status(
     Ok((cmp, files))
 }
 
+/// Rows of an agent prompt: when any row is an actual change, every row
+/// gets its unified-diff sigil; an all-context selection stays plain
+/// (asking about unchanged code shouldn't read like a patch).
+fn mark_changed_rows(rows: &[(Option<LineKind>, &str)]) -> String {
+    let changed = rows
+        .iter()
+        .any(|(kind, _)| matches!(kind, Some(LineKind::Added | LineKind::Removed)));
+    rows.iter()
+        .map(|(kind, content)| match kind {
+            _ if !changed => (*content).to_string(),
+            Some(LineKind::Added) => format!("+{content}"),
+            Some(LineKind::Removed) => format!("-{content}"),
+            Some(LineKind::Context) => format!(" {content}"),
+            // Section separators stay blank either way.
+            None => String::new(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn copy_to_clipboard(text: &str) -> Result<()> {
     let mut clipboard = arboard::Clipboard::new()?;
     clipboard.set_text(text)?;
@@ -2185,5 +2419,31 @@ mod tests {
         );
         // An empty template is rejected.
         assert!(editor_command("  ", path, 1).is_none());
+    }
+
+    #[test]
+    fn prompt_rows_carry_diff_sigils_only_around_changes() {
+        // A selection containing a change reads as a unified diff…
+        let rows = [
+            (Some(LineKind::Context), "const subtotal = total();"),
+            (Some(LineKind::Removed), "lines.push(`Subtotal: ${x}`);"),
+            (
+                Some(LineKind::Added),
+                "lines.push(`Subtotal (${n}): ${x}`);",
+            ),
+            (None, ""),
+        ];
+        assert_eq!(
+            mark_changed_rows(&rows),
+            " const subtotal = total();\n\
+             -lines.push(`Subtotal: ${x}`);\n\
+             +lines.push(`Subtotal (${n}): ${x}`);\n"
+        );
+        // …while unchanged code stays plain.
+        let plain = [
+            (Some(LineKind::Context), "fn demo() {"),
+            (Some(LineKind::Context), "}"),
+        ];
+        assert_eq!(mark_changed_rows(&plain), "fn demo() {\n}");
     }
 }

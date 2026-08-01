@@ -2,6 +2,7 @@
 //! requests, each a flat list with a cursor. Key handling stays on `App`
 //! (`handle_picker_key`); rendering lives in `ui::picker`.
 
+use crate::connect::{AgentTarget, SendContext};
 use crate::forge::date_of;
 use crate::forge::model::PullRequest;
 use crate::vcs::model::Scope;
@@ -32,11 +33,23 @@ pub struct PrPicker {
     pub cursor: usize,
 }
 
+/// The agent-target picker overlay: agent panes a prompt can go to,
+/// shown when more than one is open. Carries the captured selection so
+/// the compose step follows the choice.
+pub struct AgentPicker {
+    /// Display rows: (label, is the last-used target).
+    pub rows: Vec<(String, bool)>,
+    pub targets: Vec<AgentTarget>,
+    pub ctx: SendContext,
+    pub cursor: usize,
+}
+
 /// Whichever picker overlay is open.
 pub enum Picker {
     Base(BasePicker),
     Scope(ScopePicker),
     Pr(PrPicker),
+    Agent(AgentPicker),
 }
 
 impl Picker {
@@ -45,6 +58,7 @@ impl Picker {
             Picker::Base(picker) => (&mut picker.cursor, picker.branches.len()),
             Picker::Scope(picker) => (&mut picker.cursor, picker.entries.len()),
             Picker::Pr(picker) => (&mut picker.cursor, picker.rows.len()),
+            Picker::Agent(picker) => (&mut picker.cursor, picker.rows.len()),
         };
         *cursor = cursor
             .saturating_add_signed(delta)

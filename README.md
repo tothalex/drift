@@ -89,6 +89,9 @@ base branch, kept live as you edit:
 - Press `e` to open the file in your editor at the cursor's line
   (neovim by default, configurable — see below); edits show up in the
   diff the moment you save.
+- Press `s` to send the current line or visual selection to an AI agent
+  running in a sibling terminal pane (Claude Code, Codex, …) as a ready
+  prompt — see [Send to an AI agent](#send-to-an-ai-agent).
 - Review scopes: press `b` (or click the branch name in the status bar)
   to switch the base branch, then narrow the review to one commit or to
   untracked files only — or keep everything at once.
@@ -152,6 +155,48 @@ kind = "gitlab"          # or "github"
 
 [`gh`]: https://cli.github.com
 [`glab`]: https://gitlab.com/gitlab-org/cli
+
+## Send to an AI agent
+
+Reviewing often turns into asking: *why is this here? explain this.
+refactor that.* Press `s` on a line — or on a visual-mode selection —
+to hand it to an AI agent CLI running in a sibling pane. A small box
+takes your instruction; `enter` delivers a ready prompt into the
+agent's input: the instruction, the full `path:lines` location, and
+the selected code fenced below it. A selection that covers a change is
+sent unified-diff style — `-` old lines, `+` new lines — so the agent
+sees exactly what changed; unchanged code goes plain.
+
+This works through [herdr], a terminal workspace manager for AI coding
+agents: run drift and your agent(s) in panes of the same herdr session,
+and drift finds every agent pane automatically, with its live
+idle/working state. An agent split in drift's own tab wins outright —
+the drift-beside-claude layout never shows a picker. Otherwise one
+agent pane and the prompt goes straight there; several and a picker
+asks (closest first, each row saying where its agent is — "this tab",
+or its workspace and tab names — and preselecting the last one used).
+Inside the compose box `↑`/`↓` re-aim the prompt at another session at
+any point — the title follows. The choice sticks: once a prompt has
+gone to a session, later sends aim there directly until that pane goes
+away. The `[agent]` config section can pin a target for good:
+
+```toml
+[agent]
+# backend = "auto"    # auto | herdr | off — "herdr" forces it even
+#                     # when drift runs outside the herdr session
+# target = "claude"   # pin an agent name or pane id; empty = auto-pick
+# submit = true       # false: stage the prompt in the agent's input
+#                     # without pressing enter, to edit it there first
+# template = "{input}\n\n{file}:{lines}\n```\n{code}\n```"
+#                     # {file} is the absolute path; {relfile} the
+#                     # repo-relative one, {start}/{end} bare numbers
+```
+
+drift never talks to a model itself — the prompt lands in the agent you
+already have open, with its context, session, and subscription. Other
+multiplexers (tmux, WezTerm, kitty) can plug into the same seam later.
+
+[herdr]: https://herdr.dev
 
 ## Configuration
 
