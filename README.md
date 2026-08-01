@@ -99,11 +99,59 @@ Press `?` inside the app for all keybindings.
 
 ## Syntax & themes
 
-Built-in highlighting for Rust, Python, JavaScript, TypeScript/TSX, and
-Go ships with the One Dark Pro palette. Every color is configurable —
-UI accents and the full syntax palette alike, with per-language
-overrides, and a custom theme is a single TOML file next to the config.
-See [Configuration](#configuration).
+Highlighting ships with the One Dark Pro palette. Every color is
+configurable — UI accents and the full syntax palette alike, with
+per-language overrides, and a custom theme is a single TOML file next
+to the config. See [Configuration](#configuration).
+
+Languages install on demand (see [Languages](#languages)): no grammar
+is compiled into drift itself. Files without an installed language
+still review fine — they show as plain hunks without colors or block
+scoping.
+
+## Languages
+
+Every language is a plugin: a tree-sitter grammar fetched and compiled
+on your machine, plus a highlight query. The first time drift shows a
+file whose language is available but not installed, it offers it right
+there — press `y` and keep reviewing while the grammar builds in the
+background; highlighting and block scoping appear in place when it's
+ready. `n` declines for the session.
+
+The same works from the command line:
+
+```sh
+drift lang install rust      # curated: c, go, java, javascript, json,
+                             #   python, ruby, rust, toml, tsx, typescript
+drift lang install https://github.com/tree-sitter-grammars/tree-sitter-zig
+drift lang list              # installed and installable
+drift lang build             # rebuild all grammars (after a drift upgrade)
+drift lang remove rust
+```
+
+Installing needs `git` and a C compiler — the only place drift uses
+either. A plugin lives in `~/.config/drift/languages/<name>/`:
+
+- `language.toml` — the manifest: language name, file extensions, the
+  grammar repo pinned to a commit, and `block_kinds`, the grammar's
+  node kinds that count as reviewable blocks (what `[`/`]` widen to);
+- `highlights.scm` — the tree-sitter highlight query, yours to edit.
+  For the languages drift curates deeply (rust, typescript, tsx,
+  javascript, python, go) the installed file is drift's full query
+  stack: the grammar's bundled queries *plus* hand-tuned supplements
+  that close the gaps against editor-grade highlighting. Other
+  languages get the grammar repo's bundled query.
+
+Compiled grammars are cached in `~/.cache/drift/grammars/`, and
+`[theme.<name>]` sections theme any installed language.
+
+Curated entries are complete, tested manifests (and query stacks)
+checked into this repo's [`languages/`](languages/) directory — adding
+one to the registry is a one-file PR. URL installs scaffold the
+manifest and point out what only a human can fill in (chiefly
+`block_kinds`; `drift lang build` flags node kinds the grammar doesn't
+have). Note that grammars are native code compiled into a library
+drift loads — install only grammars you trust.
 
 ## Pull requests
 
@@ -217,9 +265,10 @@ Keys take single characters, named keys (`enter`, `space`, `tab`, arrows,
 `pageup`/`pagedown`, `home`/`end`), optionally prefixed `ctrl-`; listing
 an action replaces all of its default keys. Colors take ANSI names,
 256-color indexes, or hex values — including the full syntax palette,
-and a `[theme.<lang>]` section (rust, python, javascript, typescript,
-tsx, go) overrides any syntax color for that language only. A top-level
-`base = "…"` sets the default comparison branch.
+and a `[theme.<lang>]` section (naming any installed or curated
+language — rust, typescript, go, …) overrides any syntax color for
+that language only. A top-level `base = "…"` sets the default
+comparison branch.
 
 Colors layer in three steps: a base colorscheme, then `[theme]` /
 `[theme.<lang>]` overrides on top. The built-in colorscheme is
@@ -255,4 +304,5 @@ cargo test
 ```
 
 Git repositories are read natively (via gitoxide) — the `git` binary is
-not required.
+not required to review. Only `drift lang install`/`build` shell out to
+`git` and a C compiler, to fetch and compile grammar plugins.

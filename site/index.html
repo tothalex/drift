@@ -411,7 +411,9 @@
       <p>Tree-sitter resolves the enclosing function, class, or block around
       every change — widen or narrow the scope with <span class="k">[</span> and
       <span class="k">]</span>. Word-level emphasis marks the exact edit.
-      <span class="dim">Rust, Python, JavaScript, TypeScript, Go.</span></p>
+      <span class="dim">Grammars install on demand — drift offers the language
+      the first time it shows a file, or use
+      <a href="docs.html#languages">drift lang install</a>.</span></p>
       <p>The working tree is watched: edits from your editor, your agent, or a
       <span class="k">git commit</span> appear as they land.</p>
     </div>
@@ -439,10 +441,12 @@
     <div class="txt">
       <p class="eyebrow">SYNTAX &amp; THEMES</p>
       <h2>One Dark Pro out of the box, every color yours</h2>
-      <p>Built-in highlighting ships with the <span class="k">onedark</span>
+      <p>Highlighting ships with the <span class="k">onedark</span>
       palette — the one this page is painted with. Colors take ANSI names,
       256-color indexes, or hex, with per-language overrides; a theme is one
-      TOML file next to your config.</p>
+      TOML file next to your config. Languages plug in as
+      <a href="docs.html#languages">installable grammars</a> — drift offers
+      each one the first time it's needed.</p>
     </div>
     <div class="term" id="themed">
       <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="name">~/.config/drift/themes/</span></div>

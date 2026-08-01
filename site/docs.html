@@ -175,6 +175,7 @@
     <a class="sub" href="#config-theme">[theme]</a>
     <a class="sub" href="#config-forge">[forge]</a>
     <a class="sub" href="#config-agent">[agent]</a>
+    <a href="#languages">Language plugins</a>
     <a href="#pull-requests">Pull requests</a>
     <a href="#ai-agents">AI agents</a>
     <a href="#build">Build from source</a>
@@ -213,6 +214,7 @@
         <tr><td>-b, --base &lt;branch&gt;</td><td>Base branch to compare against. Auto-detected when absent: <code>origin/HEAD</code>, then <code>main</code>, then <code>master</code>.</td></tr>
         <tr><td>--pr &lt;number&gt;</td><td>Open this pull request / merge request immediately (needs an authenticated <code>gh</code> or <code>glab</code>).</td></tr>
         <tr><td>--init-config</td><td>Write the fully documented default config to <code>~/.config/drift/config.toml</code> and exit.</td></tr>
+        <tr><td>lang &lt;command&gt;</td><td>Manage <a href="#languages">language plugins</a>: <code>install</code>, <code>build</code>, <code>list</code>, <code>remove</code>.</td></tr>
         <tr><td>-V, --version</td><td>Print the version.</td></tr>
       </table>
       <p>The comparison point is <code>git merge-base &lt;base&gt; HEAD</code>,
@@ -315,10 +317,11 @@
 
 <span class="tbl">[rust]</span>
 <span class="key">bracket</span> = <span class="s">"#fe8019"</span></pre>
-        <p>A <code>[theme.&lt;lang&gt;]</code> section (rust, python,
-        javascript, typescript, tsx, go) overrides any syntax color for
-        that language only — the way onedark itself paints brackets
-        orange in TypeScript but purple in Go.</p>
+        <p>A <code>[theme.&lt;lang&gt;]</code> section (naming any
+        <a href="#languages">installed or curated language</a> — rust,
+        typescript, go, …) overrides any syntax color for that language
+        only — the way onedark itself paints brackets orange in
+        TypeScript but purple in Go.</p>
       </section>
 
       <section id="config-forge">
@@ -348,6 +351,73 @@
         ("12" or "12-18"), <code>{start}</code>, <code>{end}</code>, and
         <code>{code}</code> describe the selection.</p>
       </section>
+    </section>
+
+    <section id="languages">
+      <h2>Language plugins</h2>
+      <p>Every language is a plugin: a tree-sitter grammar fetched and
+      compiled on your machine, plus a highlight query — no grammar is
+      compiled into drift itself. The first time drift shows a file
+      whose language is available but not installed, it offers it right
+      there: press <kbd>y</kbd> and keep reviewing while the grammar
+      builds in the background — highlighting and block scoping appear
+      in place when it's ready; <kbd>n</kbd> declines for the session.
+      Files without an installed language review as plain hunks.</p>
+      <p>The same works from the command line. Installing needs
+      <code>git</code> and a C compiler — the only place drift uses
+      either.</p>
+      <pre><span class="p">$</span> drift lang install rust    <span class="c"># curated: c, go, java, javascript, json,</span>
+<span class="c">                             #   python, ruby, rust, toml, tsx, typescript</span>
+<span class="p">$</span> drift lang install https://github.com/tree-sitter-grammars/tree-sitter-zig
+<span class="p">$</span> drift lang list            <span class="c"># installed and installable</span>
+<span class="p">$</span> drift lang build           <span class="c"># rebuild grammars (after a drift upgrade)</span>
+<span class="p">$</span> drift lang remove rust</pre>
+      <p>For the languages drift curates deeply (rust, typescript, tsx,
+      javascript, python, go) the installed <code>highlights.scm</code>
+      is drift's full query stack — the grammar's bundled queries
+      <em>plus</em> hand-tuned supplements that close the gaps against
+      editor-grade highlighting — and it's yours to edit. Other
+      languages get the grammar repo's bundled query.</p>
+      <p>A plugin is a directory under
+      <code>~/.config/drift/languages/&lt;name&gt;/</code>; compiled
+      grammars are cached in <code>~/.cache/drift/grammars/</code>.</p>
+      <table>
+        <tr><th>FILE</th><th>MEANING</th></tr>
+        <tr><td>language.toml</td><td>The manifest: name, file extensions, grammar repo pinned to a commit, and the block kinds.</td></tr>
+        <tr><td>highlights.scm</td><td>The tree-sitter highlight query: drift's curated stack, or the grammar repo's bundled query — yours to edit either way.</td></tr>
+      </table>
+      <pre><span class="c"># ~/.config/drift/languages/zig/language.toml</span>
+<span class="key">name</span> = <span class="s">"zig"</span>
+<span class="key">extensions</span> = [<span class="s">"zig"</span>, <span class="s">"zon"</span>]
+
+<span class="tbl">[grammar]</span>
+<span class="key">repo</span> = <span class="s">"https://github.com/tree-sitter-grammars/tree-sitter-zig"</span>
+<span class="key">rev</span> = <span class="s">"…"</span>              <span class="c"># commit to build; default branch if unset</span>
+<span class="c"># path = "zig"                 # subdirectory, for repos hosting several grammars</span>
+<span class="c"># symbol = "tree_sitter_zig"   # exported fn; tree_sitter_&lt;name&gt; if unset</span>
+<span class="key">block_kinds</span> = [<span class="s">"function_declaration"</span>, <span class="s">"if_statement"</span>]</pre>
+      <p><code>block_kinds</code> lists the grammar's node kinds that
+      count as reviewable blocks — what changes expand to and what
+      <kbd>[</kbd>/<kbd>]</kbd> widen through: functions, classes, loops.
+      <code>drift lang build</code> warns about node kinds the grammar
+      doesn't actually have, and validates the highlight query against
+      the freshly built grammar.</p>
+      <ul>
+        <li>Curated languages are complete manifests (and query stacks)
+        in the repo's
+        <a href="https://github.com/tothalex/drift/tree/main/languages">languages/</a>
+        directory, embedded into the binary — adding one upstream is a
+        one-file PR. URL installs scaffold the manifest and point out
+        what to fill in.</li>
+        <li>Every installed language's name works in
+        <a href="#config-theme">[theme.&lt;lang&gt;]</a> sections.</li>
+        <li>A broken plugin never stops drift — it degrades to a startup
+        warning and plain hunk view for its files. After a drift upgrade
+        changes the tree-sitter ABI, <code>drift lang build</code>
+        rebuilds everything.</li>
+      </ul>
+      <p class="dim">Grammars are native code compiled into a library
+      that drift loads — install only grammars you trust.</p>
     </section>
 
     <section id="pull-requests">
@@ -403,7 +473,10 @@
       <pre><span class="p">$</span> cargo build --release   <span class="c"># binary at target/release/drift</span>
 <span class="p">$</span> cargo test</pre>
       <p>Git repositories are read natively (via gitoxide) — the
-      <code>git</code> binary is not required.</p>
+      <code>git</code> binary is not required to review. Only
+      <code>drift lang install</code>/<code>build</code> shell out to
+      <code>git</code> and a C compiler, to fetch and compile grammar
+      plugins.</p>
     </section>
   </main>
 </div>
