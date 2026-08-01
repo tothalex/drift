@@ -2209,7 +2209,8 @@ impl App {
         };
         let Some(bridge) = connect::detect(&self.agent_config) else {
             self.notice = Some(
-                "no agent connector — run drift inside herdr (or set [agent] backend)".to_string(),
+                "no agent connector — run drift inside herdr or tmux (or set [agent] backend)"
+                    .to_string(),
             );
             return;
         };

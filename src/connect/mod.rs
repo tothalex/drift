@@ -12,6 +12,7 @@
 //! target picker all follow from that table.
 
 mod herdr;
+mod tmux;
 
 use anyhow::{Result, anyhow, bail};
 
@@ -50,6 +51,7 @@ pub enum Backend {
     /// A specific backend, even when drift runs outside it (a
     /// multiplexer's CLI reaches the default session regardless).
     Herdr,
+    Tmux,
 }
 
 /// One registered backend: its config name, how to tell drift is
@@ -65,12 +67,23 @@ struct BackendDef {
     make: fn() -> Box<dyn Bridge>,
 }
 
-const BACKENDS: &[BackendDef] = &[BackendDef {
-    name: "herdr",
-    backend: Backend::Herdr,
-    inside_env: herdr::INSIDE_ENV,
-    make: herdr::make,
-}];
+/// herdr outranks tmux in auto-detection: a herdr session may itself
+/// sit inside tmux, and herdr's native agent tracking is the richer
+/// bridge wherever both would match.
+const BACKENDS: &[BackendDef] = &[
+    BackendDef {
+        name: "herdr",
+        backend: Backend::Herdr,
+        inside_env: herdr::INSIDE_ENV,
+        make: herdr::make,
+    },
+    BackendDef {
+        name: "tmux",
+        backend: Backend::Tmux,
+        inside_env: tmux::INSIDE_ENV,
+        make: tmux::make,
+    },
+];
 
 impl Backend {
     /// Parse the config's `agent.backend` value ("auto" when absent).
@@ -155,9 +168,15 @@ pub struct AgentTarget {
 
 impl AgentTarget {
     /// Picker row / notice / compose-title label:
-    /// "claude · this tab · idle".
+    /// "claude · this tab · idle" — the status segment only when the
+    /// backend knows one (tmux doesn't).
     pub fn label(&self) -> String {
-        format!("{} · {} · {}", self.name, self.where_label, self.status)
+        let mut label = format!("{} · {}", self.name, self.where_label);
+        if !self.status.is_empty() {
+            label.push_str(" · ");
+            label.push_str(&self.status);
+        }
+        label
     }
 }
 
@@ -246,9 +265,23 @@ mod tests {
         assert_eq!(Backend::parse(Some("auto")).unwrap(), Backend::Auto);
         assert_eq!(Backend::parse(Some("off")).unwrap(), Backend::Off);
         assert_eq!(Backend::parse(Some("herdr")).unwrap(), Backend::Herdr);
-        let err = Backend::parse(Some("tmux")).unwrap_err().to_string();
+        assert_eq!(Backend::parse(Some("tmux")).unwrap(), Backend::Tmux);
+        let err = Backend::parse(Some("zellij")).unwrap_err().to_string();
         assert!(err.contains("\"herdr\""), "{err}");
-        assert!(err.contains("'tmux'"), "{err}");
+        assert!(err.contains("\"tmux\""), "{err}");
+        assert!(err.contains("'zellij'"), "{err}");
+    }
+
+    #[test]
+    fn labels_omit_an_unknown_status() {
+        let target = AgentTarget {
+            name: "claude".to_string(),
+            id: "%1".to_string(),
+            status: String::new(),
+            place: Place::SameTab,
+            where_label: "this tab".to_string(),
+        };
+        assert_eq!(target.label(), "claude · this tab");
     }
 
     #[test]

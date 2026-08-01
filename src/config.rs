@@ -81,8 +81,8 @@ impl ForgeSection {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AgentSection {
-    /// "auto" | "herdr" | "off" — auto uses the multiplexer drift runs
-    /// inside; naming one forces it even from outside.
+    /// "auto" | "herdr" | "tmux" | "off" — auto uses the multiplexer
+    /// drift runs inside; naming one forces it even from outside.
     #[serde(default)]
     backend: Option<String>,
     /// Pin the target: an agent name ("claude") or pane id.
@@ -277,13 +277,13 @@ pub fn default_toml() -> String {
          # glab = \"/path/to/glab\"\n\n\
          # Send the current line or visual selection to an AI agent pane\n\
          # (the s key): the prompt you type lands in a running claude/\n\
-         # codex/… CLI in a sibling pane of the herdr multiplexer. With\n\
-         # \"auto\", drift must run inside herdr; backend = \"herdr\" forces\n\
-         # it from any terminal. In the template, {input} is the typed\n\
+         # codex/… CLI in a sibling pane of the herdr or tmux session\n\
+         # drift runs inside; naming a backend forces it even from any\n\
+         # terminal. In the template, {input} is the typed\n\
          # prompt; {file} (absolute path), {relfile} (repo-relative),\n\
          # {lines}, {start}, {end} and {code} describe the selection.\n\
          # [agent]\n\
-         # backend = \"auto\"         # auto | herdr | off\n\
+         # backend = \"auto\"         # auto | herdr | tmux | off\n\
          # target = \"\"              # pin an agent name or pane id\n\
          # submit = true            # press enter after inserting\n\
          # template = \"{input}\\n\\n{file}:{lines}\\n```\\n{code}\\n```\"\n\n[keys]\n",
@@ -415,7 +415,7 @@ mod tests {
         assert!(config.agent.submit);
         assert!(config.agent.target.is_none());
 
-        std::fs::write(&config_path, "[agent]\nbackend = \"tmux\"\n").unwrap();
+        std::fs::write(&config_path, "[agent]\nbackend = \"zellij\"\n").unwrap();
         let err = load_at(&config_path).err().expect("must fail").to_string();
         assert!(err.contains("invalid [agent]"), "{err}");
     }
