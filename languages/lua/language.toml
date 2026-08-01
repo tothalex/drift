@@ -1,0 +1,16 @@
+# Curated by drift. Install: drift lang install lua
+name = "lua"
+extensions = ["lua"]
+
+[grammar]
+repo = "https://github.com/tree-sitter-grammars/tree-sitter-lua"
+rev = "10fe0054734eec83049514ea2e718b2a56acd0c9"
+block_kinds = [
+    "function_declaration",
+    "function_definition",
+    "if_statement",
+    "for_statement",
+    "while_statement",
+    "repeat_statement",
+    "do_statement",
+]

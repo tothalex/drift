@@ -1,0 +1,26 @@
+# Curated by drift. Install: drift lang install dockerfile
+# Matching is extension-based: covers *.dockerfile, not bare `Dockerfile`.
+name = "dockerfile"
+extensions = ["dockerfile"]
+
+[grammar]
+repo = "https://github.com/camdencheek/tree-sitter-dockerfile"
+rev = "868e44ce378deb68aac902a9db68ff82d2299dd0"
+block_kinds = [
+    "add_instruction",
+    "arg_instruction",
+    "cmd_instruction",
+    "copy_instruction",
+    "entrypoint_instruction",
+    "env_instruction",
+    "expose_instruction",
+    "from_instruction",
+    "healthcheck_instruction",
+    "label_instruction",
+    "onbuild_instruction",
+    "run_instruction",
+    "shell_instruction",
+    "user_instruction",
+    "volume_instruction",
+    "workdir_instruction",
+]

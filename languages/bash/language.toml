@@ -1,0 +1,15 @@
+# Curated by drift. Install: drift lang install bash
+name = "bash"
+extensions = ["sh", "bash"]
+
+[grammar]
+repo = "https://github.com/tree-sitter/tree-sitter-bash"
+rev = "a06c2e4415e9bc0346c6b86d401879ffb44058f7"
+block_kinds = [
+    "function_definition",
+    "if_statement",
+    "for_statement",
+    "c_style_for_statement",
+    "while_statement",
+    "case_statement",
+]

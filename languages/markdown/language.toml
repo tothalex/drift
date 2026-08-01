@@ -1,0 +1,19 @@
+# Curated by drift. Install: drift lang install markdown
+# The block grammar only (the repo's inline grammar composes via
+# injections, which drift doesn't do): structure and block-level
+# highlighting; no bold/links/code-span colors inside paragraphs.
+name = "markdown"
+extensions = ["md", "markdown"]
+
+[grammar]
+repo = "https://github.com/tree-sitter-grammars/tree-sitter-markdown"
+rev = "f969cd3ae3f9fbd4e43205431d0ae286014c05b5"
+path = "tree-sitter-markdown"
+block_kinds = [
+    "section",
+    "fenced_code_block",
+    "indented_code_block",
+    "block_quote",
+    "list_item",
+    "html_block",
+]

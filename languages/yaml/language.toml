@@ -1,0 +1,8 @@
+# Curated by drift. Install: drift lang install yaml
+name = "yaml"
+extensions = ["yaml", "yml"]
+
+[grammar]
+repo = "https://github.com/tree-sitter-grammars/tree-sitter-yaml"
+rev = "7708026449bed86239b1cd5bce6e3c34dbca6415"
+block_kinds = ["block_mapping_pair", "block_sequence_item"]

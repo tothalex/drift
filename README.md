@@ -121,8 +121,10 @@ ready. `n` declines for the session.
 The same works from the command line:
 
 ```sh
-drift lang install rust      # curated: c, css, go, html, java, javascript,
-                             #   json, python, ruby, rust, toml, tsx, typescript
+drift lang install rust      # curated: bash, c, cpp, csharp, css, dockerfile,
+                             #   go, html, java, javascript, json, lua, markdown,
+                             #   php, python, ruby, rust, toml, tsx, typescript,
+                             #   yaml
 drift lang install https://github.com/tree-sitter-grammars/tree-sitter-zig
 drift lang list              # installed and installable
 drift lang build             # rebuild all grammars (after a drift upgrade)

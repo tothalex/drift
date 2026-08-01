@@ -42,19 +42,27 @@ macro_rules! curated {
 /// Keep sorted; a test checks this table against the `languages/`
 /// directory listing.
 pub(super) const CURATED: &[Curated] = &[
+    curated!("bash"),
     curated!("c"),
+    curated!("cpp"),
+    curated!("csharp"),
     curated!("css"),
+    curated!("dockerfile"),
     curated!("go", highlights),
     curated!("html"),
     curated!("java"),
     curated!("javascript", highlights),
     curated!("json"),
+    curated!("lua"),
+    curated!("markdown"),
+    curated!("php"),
     curated!("python", highlights),
     curated!("ruby"),
     curated!("rust", highlights),
     curated!("toml"),
     curated!("tsx", highlights),
     curated!("typescript", highlights),
+    curated!("yaml"),
 ];
 
 pub(super) fn find(name: &str) -> Option<&'static Curated> {
