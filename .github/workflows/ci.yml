@@ -1,9 +1,23 @@
 name: CI
 
+# Docs, the website, and demo assets never affect `cargo test` — don't
+# spend three runners on them.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - assets/**
+      - site/**
+      - install.sh
+      - .github/workflows/pages.yml
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - assets/**
+      - site/**
+      - install.sh
+      - .github/workflows/pages.yml
 
 permissions:
   contents: read
