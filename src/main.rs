@@ -2,15 +2,25 @@ use anyhow::Result;
 use clap::Parser;
 
 use drift::app::App;
-use drift::cli::Cli;
+use drift::cli::{Cli, Command};
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Some(Command::Lang { command }) = &cli.command {
+        return drift::lang::cli::run(command);
+    }
 
     if cli.init_config {
         let path = drift::config::write_default()?;
         println!("wrote {}", path.display());
         return Ok(());
+    }
+
+    // Plugin languages join the registry before the config parses:
+    // `[theme.<lang>]` sections validate against the full registry.
+    for warning in drift::lang::init_plugins() {
+        eprintln!("warning: {warning}");
     }
 
     // Fail before touching the terminal so errors print normally.

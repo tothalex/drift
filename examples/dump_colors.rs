@@ -43,7 +43,7 @@ fn main() {
     let path = std::env::args().nth(1).expect("usage: dump_colors <file>");
     let source = std::fs::read_to_string(&path).expect("read file");
     let theme = Theme::default();
-    let lang = drift::processor::treesitter::lang_name(Path::new(&path));
+    let lang = drift::lang::lang_name(Path::new(&path));
     let hl = highlight(Path::new(&path), &source).expect("supported language");
     let mut out = String::new();
     for (row, line) in source.lines().enumerate() {

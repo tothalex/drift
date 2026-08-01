@@ -9,9 +9,9 @@ use ratatui::widgets::Paragraph;
 use std::path::Path;
 
 use crate::app::{ActionSpot, App, Pane};
+use crate::lang::lang_name;
 use crate::processor::comments;
 use crate::processor::highlight::{HighlightSpan, TokenKind};
-use crate::processor::treesitter::lang_name;
 use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
 use crate::ui::{header_style, search_range};

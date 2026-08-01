@@ -1,0 +1,33 @@
+# Curated by drift. Built in — installing makes it an editable plugin
+# that overrides the built-in, starting from drift's full query stack
+# (the JavaScript base query layered under the TypeScript one, plus
+# drift's decorator and type-syntax supplements).
+# The rev matches the grammar crate the binary links (v0.23.2); the
+# repository hosts two grammars, this one lives in typescript/.
+name = "typescript"
+extensions = ["ts", "mts", "cts"]
+
+[grammar]
+repo = "https://github.com/tree-sitter/tree-sitter-typescript"
+rev = "f975a621f4e7f532fe322e13c4f79495e0a7b2e7"
+path = "typescript"
+block_kinds = [
+    "export_statement",
+    "function_declaration",
+    "generator_function_declaration",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+    "class_declaration",
+    "abstract_class_declaration",
+    "interface_declaration",
+    "enum_declaration",
+    "type_alias_declaration",
+    "if_statement",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "switch_statement",
+    "try_statement",
+]

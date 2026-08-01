@@ -1,0 +1,26 @@
+# Curated by drift. Built in — installing makes it an editable plugin
+# that overrides the built-in, starting from drift's full query stack
+# (including the JSX query and decorator supplements).
+# The rev matches the grammar crate the binary links (v0.25.0).
+name = "javascript"
+extensions = ["js", "mjs", "cjs", "jsx"]
+
+[grammar]
+repo = "https://github.com/tree-sitter/tree-sitter-javascript"
+rev = "f76aea6aa47322ea5c208c9c2e67f4a350d554f3"
+block_kinds = [
+    "export_statement",
+    "function_declaration",
+    "generator_function_declaration",
+    "function_expression",
+    "arrow_function",
+    "method_definition",
+    "class_declaration",
+    "if_statement",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "switch_statement",
+    "try_statement",
+]

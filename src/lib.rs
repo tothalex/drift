@@ -5,6 +5,7 @@ pub mod connect;
 pub mod events;
 pub mod forge;
 pub mod keymap;
+pub mod lang;
 pub mod processor;
 pub mod theme;
 pub mod tree;

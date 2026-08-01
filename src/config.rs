@@ -302,8 +302,9 @@ pub fn default_toml() -> String {
     }
     out.push_str(
         "\n# Per-language overrides of the syntax palette: any [theme.<lang>]\n\
-         # section (rust, python, javascript, typescript, tsx, go) may reset\n\
-         # any syntax key for that language only.\n",
+         # section naming an installed or curated language (rust, typescript,\n\
+         # go, … — see `drift lang list`) may reset any syntax key for that\n\
+         # language only.\n",
     );
     let mut last_lang = "";
     for (lang, key, value) in THEME_LANG_DEFAULTS {

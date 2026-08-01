@@ -1,0 +1,21 @@
+# Curated by drift. Install: drift lang install ruby
+name = "ruby"
+extensions = ["rb", "rake", "gemspec"]
+
+[grammar]
+repo = "https://github.com/tree-sitter/tree-sitter-ruby"
+rev = "ad907a69da0c8a4f7a943a7fe012712208da6dee"
+block_kinds = [
+    "method",
+    "singleton_method",
+    "class",
+    "module",
+    "if",
+    "unless",
+    "while",
+    "until",
+    "case",
+    "begin",
+    "do_block",
+    "block",
+]

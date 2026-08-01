@@ -20,8 +20,22 @@ cargo fmt                   # required before committing
 - `src/app/` — the coordinator: event loop, key dispatch, overlay state
   (picker, compose, help). Fully synchronous — no async runtime;
   background work is `std::thread::spawn` + an `AppEvent` channel.
+- `src/lang/` — the language registry: name, extensions, grammar,
+  block kinds, highlight queries per language. Everything language-
+  specific lives here. No grammar is compiled into drift: every
+  language is a plugin (manifest + query + dylib-compiled grammar
+  under the config dir's `languages/`), installed via the `drift
+  lang` CLI or the in-app prompt and hot-loaded. The curated install
+  registry is the repo's `languages/` directory (manifests + drift's
+  query stacks), embedded into the binary — adding a curated language
+  = one manifest file there, and tests validate every entry. Unit
+  tests see a registry built from dev-dependency grammar crates plus
+  those curated files, so the suite runs without git or a C compiler;
+  the crate versions in `[dev-dependencies]` must match the revs the
+  curated manifests pin.
 - `src/processor/` — tree-sitter block scoping, syntax highlighting,
-  view flattening (`view.rs` is the canonical row model).
+  view flattening (`view.rs` is the canonical row model). Language-
+  agnostic: grammars and queries come from `src/lang/`.
 - `src/vcs/` — git via gitoxide; never shells out to `git`.
 - `src/forge/` — PRs through the official `gh`/`glab` CLIs; drift never
   speaks HTTP itself. One submodule per forge behind the `Forge` trait.

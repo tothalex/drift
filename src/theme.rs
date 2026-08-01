@@ -173,7 +173,7 @@ impl Theme {
                 .or_default()
                 .insert(key.to_string(), color);
         }
-        let known_langs: Vec<&str> = crate::processor::treesitter::lang_names().collect();
+        let known_langs: Vec<&str> = crate::lang::lang_names();
         for (language, entries) in lang_overrides {
             if !known_langs.contains(&language.as_str()) {
                 bail!(

@@ -1,0 +1,18 @@
+# Curated by drift. Install: drift lang install c
+name = "c"
+extensions = ["c", "h"]
+
+[grammar]
+repo = "https://github.com/tree-sitter/tree-sitter-c"
+rev = "b780e47fc780ddc8da13afa35a3f4ed5c157823d"
+block_kinds = [
+    "function_definition",
+    "struct_specifier",
+    "union_specifier",
+    "enum_specifier",
+    "if_statement",
+    "for_statement",
+    "while_statement",
+    "do_statement",
+    "switch_statement",
+]

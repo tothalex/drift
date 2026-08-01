@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryCursor, Tree};
 
+use crate::lang::LangSpec;
+
 use super::treesitter;
-use super::treesitter::LangSpec;
 
 /// Semantic token classes the UI knows how to color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

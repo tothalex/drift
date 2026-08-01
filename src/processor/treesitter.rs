@@ -1,257 +1,14 @@
-//! Tree-sitter block resolver and the language registry.
-//!
-//! Adding a language = one `LangSpec` entry + one grammar crate.
+//! Tree-sitter block resolver: parses a file with the grammar the
+//! language registry (`crate::lang`) prescribes and walks the tree for
+//! the blocks enclosing a change.
 
 use std::path::Path;
 
-use tree_sitter::{Language, Node, Parser, Tree};
+use tree_sitter::{Node, Parser, Tree};
+
+use crate::lang::{LangSpec, spec_for};
 
 use super::blocks::{Block, BlockResolver};
-
-pub(crate) struct LangSpec {
-    /// Stable identifier for per-language theming (`[theme.rust]`).
-    pub(crate) name: &'static str,
-    extensions: &'static [&'static str],
-    language: fn() -> Language,
-    /// Node kinds that count as reviewable blocks, innermost-first walk.
-    block_kinds: &'static [&'static str],
-    /// Highlight query sources, concatenated at build time (some grammars
-    /// layer on a base language's query, e.g. TypeScript over JavaScript).
-    highlight_queries: &'static [&'static str],
-}
-
-impl LangSpec {
-    pub(super) fn language(&self) -> Language {
-        (self.language)()
-    }
-
-    pub(super) fn highlight_query_parts(&self) -> &'static [&'static str] {
-        self.highlight_queries
-    }
-}
-
-/// Registry lookup by file extension.
-pub(super) fn spec_for(path: &Path) -> Option<&'static LangSpec> {
-    let ext = path.extension()?.to_str()?;
-    LANGUAGES.iter().find(|spec| spec.extensions.contains(&ext))
-}
-
-/// Language identifier for a path, for per-language theming.
-pub fn lang_name(path: &Path) -> Option<&'static str> {
-    spec_for(path).map(|spec| spec.name)
-}
-
-/// All language identifiers the registry knows (config validation).
-pub(crate) fn lang_names() -> impl Iterator<Item = &'static str> {
-    LANGUAGES.iter().map(|spec| spec.name)
-}
-
-fn lang_rust() -> Language {
-    tree_sitter_rust::LANGUAGE.into()
-}
-fn lang_python() -> Language {
-    tree_sitter_python::LANGUAGE.into()
-}
-fn lang_javascript() -> Language {
-    tree_sitter_javascript::LANGUAGE.into()
-}
-fn lang_typescript() -> Language {
-    tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
-}
-fn lang_tsx() -> Language {
-    tree_sitter_typescript::LANGUAGE_TSX.into()
-}
-fn lang_go() -> Language {
-    tree_sitter_go::LANGUAGE.into()
-}
-
-const JS_BLOCK_KINDS: &[&str] = &[
-    // Wraps declarations; without it, spans touching the `export` keyword
-    // would walk past the function to top level.
-    "export_statement",
-    "function_declaration",
-    "generator_function_declaration",
-    "function_expression",
-    "arrow_function",
-    "method_definition",
-    "class_declaration",
-    "if_statement",
-    "for_statement",
-    "for_in_statement",
-    "while_statement",
-    "do_statement",
-    "switch_statement",
-    "try_statement",
-];
-
-const TS_BLOCK_KINDS: &[&str] = &[
-    "export_statement",
-    "function_declaration",
-    "generator_function_declaration",
-    "function_expression",
-    "arrow_function",
-    "method_definition",
-    "class_declaration",
-    "abstract_class_declaration",
-    "interface_declaration",
-    "enum_declaration",
-    "type_alias_declaration",
-    "if_statement",
-    "for_statement",
-    "for_in_statement",
-    "while_statement",
-    "do_statement",
-    "switch_statement",
-    "try_statement",
-];
-
-/// Supplement to the grammar-bundled Rust query, closing the visible gaps
-/// against nvim-treesitter's richer queries: plain identifiers are
-/// variables (red in onedark), and `path::segments` take the type color.
-/// Same-range collisions resolve by token precedence, so the bundled
-/// query's more specific captures (functions, types, macros) still win.
-const RUST_EXTRA_HIGHLIGHTS: &str = "
-(identifier) @variable
-(scoped_identifier (identifier) @type)
-(scoped_use_list path: (identifier) @type)
-(use_declaration (identifier) @type)
-(arguments [\"(\" \")\"] @punctuation.bracket.call)
-((identifier) @type (#any-of? @type \"Some\" \"None\" \"Ok\" \"Err\"))
-(crate) @type
-(attribute (identifier) @function)
-((token_tree (identifier) @type) (#match? @type \"^[A-Z]\"))
-(mod_item name: (identifier) @type)
-(enum_variant name: (identifier) @constant)
-((identifier) @constant (#match? @constant \"^[A-Z][A-Z0-9_]*$\"))
-(lifetime \"'\" @keyword)
-(lifetime (identifier) @attribute)
-(scoped_type_identifier path: (identifier) @type)
-(closure_parameters \"|\" @punctuation.bracket)
-(match_pattern (scoped_identifier name: (identifier) @constant))
-(let_condition (scoped_identifier name: (identifier) @constant))
-(tuple_struct_pattern type: (scoped_identifier name: (identifier) @constant))
-\"_\" @keyword
-";
-
-/// Supplement to the JS/TS queries: the bundled ones have no decorator
-/// rules, leaving `@` uncolored and the name looking like a call. nvim
-/// paints the whole `@Name` as `@attribute`; same-range precedence lets
-/// the attribute win over the call capture.
-const TS_JS_EXTRA_HIGHLIGHTS: &str = "
-(decorator \"@\" @attribute)
-(decorator (identifier) @attribute)
-(decorator (call_expression function: (identifier) @attribute))
-(decorator (call_expression function: (member_expression) @attribute))
-(namespace_export \"*\" @keyword)
-(namespace_export (identifier) @type)
-(ternary_expression [\"?\" \":\"] @keyword)
-";
-
-/// TypeScript-only constructs the bundled query misses (these node kinds
-/// don't exist in the plain-JS grammar, so they can't join
-/// [`TS_JS_EXTRA_HIGHLIGHTS`] without breaking its compilation).
-const TS_ONLY_EXTRA_HIGHLIGHTS: &str = "
-[\"is\" \"infer\" \"asserts\"] @keyword
-(type_parameters [\"<\" \">\"] @punctuation.bracket)
-(type_arguments [\"<\" \">\"] @punctuation.bracket)
-(method_signature name: (property_identifier) @function.method)
-(abstract_method_signature name: (property_identifier) @function.method)
-(conditional_type [\"?\" \":\"] @keyword)
-(union_type \"|\" @punctuation.delimiter)
-(intersection_type \"&\" @punctuation.delimiter)
-";
-
-const LANGUAGES: &[LangSpec] = &[
-    LangSpec {
-        name: "rust",
-        extensions: &["rs"],
-        language: lang_rust,
-        block_kinds: &[
-            "function_item",
-            "impl_item",
-            "trait_item",
-            "struct_item",
-            "enum_item",
-            "mod_item",
-            "macro_definition",
-            "if_expression",
-            "for_expression",
-            "while_expression",
-            "loop_expression",
-            "match_expression",
-        ],
-        highlight_queries: &[tree_sitter_rust::HIGHLIGHTS_QUERY, RUST_EXTRA_HIGHLIGHTS],
-    },
-    LangSpec {
-        name: "python",
-        extensions: &["py"],
-        language: lang_python,
-        block_kinds: &[
-            "function_definition",
-            "class_definition",
-            "decorated_definition",
-            "if_statement",
-            "for_statement",
-            "while_statement",
-            "with_statement",
-            "try_statement",
-            "match_statement",
-        ],
-        highlight_queries: &[tree_sitter_python::HIGHLIGHTS_QUERY],
-    },
-    LangSpec {
-        name: "javascript",
-        extensions: &["js", "mjs", "cjs", "jsx"],
-        language: lang_javascript,
-        block_kinds: JS_BLOCK_KINDS,
-        highlight_queries: &[
-            tree_sitter_javascript::HIGHLIGHT_QUERY,
-            tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
-            TS_JS_EXTRA_HIGHLIGHTS,
-        ],
-    },
-    LangSpec {
-        name: "typescript",
-        extensions: &["ts", "mts", "cts"],
-        language: lang_typescript,
-        block_kinds: TS_BLOCK_KINDS,
-        highlight_queries: &[
-            tree_sitter_javascript::HIGHLIGHT_QUERY,
-            tree_sitter_typescript::HIGHLIGHTS_QUERY,
-            TS_JS_EXTRA_HIGHLIGHTS,
-            TS_ONLY_EXTRA_HIGHLIGHTS,
-        ],
-    },
-    LangSpec {
-        name: "tsx",
-        extensions: &["tsx"],
-        language: lang_tsx,
-        block_kinds: TS_BLOCK_KINDS,
-        highlight_queries: &[
-            tree_sitter_javascript::HIGHLIGHT_QUERY,
-            tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
-            tree_sitter_typescript::HIGHLIGHTS_QUERY,
-            TS_JS_EXTRA_HIGHLIGHTS,
-            TS_ONLY_EXTRA_HIGHLIGHTS,
-        ],
-    },
-    LangSpec {
-        name: "go",
-        extensions: &["go"],
-        language: lang_go,
-        block_kinds: &[
-            "function_declaration",
-            "method_declaration",
-            "type_declaration",
-            "if_statement",
-            "for_statement",
-            "expression_switch_statement",
-            "type_switch_statement",
-            "select_statement",
-        ],
-        highlight_queries: &[tree_sitter_go::HIGHLIGHTS_QUERY],
-    },
-];
 
 pub struct TsResolver<'a> {
     source: &'a str,
@@ -267,7 +24,7 @@ impl<'a> TsResolver<'a> {
     pub fn new(path: &Path, source: &'a str) -> Option<Self> {
         let spec = spec_for(path)?;
         let mut parser = Parser::new();
-        parser.set_language(&(spec.language)()).ok()?;
+        parser.set_language(&spec.language()).ok()?;
         let tree = parser.parse(source, None)?;
 
         let mut line_starts = vec![0];
@@ -347,7 +104,7 @@ impl BlockResolver for TsResolver<'_> {
             return blocks;
         };
         loop {
-            if self.spec.block_kinds.contains(&node.kind()) {
+            if self.spec.block_kinds().contains(&node.kind()) {
                 let block = self.block_from(node);
                 // Skip wrappers with the same span (e.g. a decorated
                 // definition around a function) — not a useful level.
