@@ -43,7 +43,9 @@ macro_rules! curated {
 /// directory listing.
 pub(super) const CURATED: &[Curated] = &[
     curated!("c"),
+    curated!("css"),
     curated!("go", highlights),
+    curated!("html"),
     curated!("java"),
     curated!("javascript", highlights),
     curated!("json"),

@@ -1,0 +1,8 @@
+# Curated by drift. Install: drift lang install html
+name = "html"
+extensions = ["html", "htm"]
+
+[grammar]
+repo = "https://github.com/tree-sitter/tree-sitter-html"
+rev = "73a3947324f6efddf9e17c0ea58d454843590cc0"
+block_kinds = ["element", "script_element", "style_element"]
