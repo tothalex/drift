@@ -340,8 +340,8 @@
       <section id="config-agent">
         <h3><code>[agent]</code> — send code to an AI session</h3>
         <pre><span class="tbl">[agent]</span>
-<span class="c"># backend = "auto"     # auto | herdr | off — "herdr" forces it even</span>
-<span class="c">#                      # when drift runs outside the herdr session</span>
+<span class="c"># backend = "auto"     # auto | herdr | tmux | off — naming one forces</span>
+<span class="c">#                      # it even when drift runs outside that session</span>
 <span class="c"># target = "claude"    # pin an agent name or pane id; empty = auto-pick</span>
 <span class="c"># submit = true        # false: stage the prompt without pressing enter</span>
 <span class="c"># template = "{input}\n\n{file}:{lines}\n```\n{code}\n```"</span></pre>
@@ -453,9 +453,13 @@
       attached. A selection that covers a change is sent unified-diff
       style — <code>-</code> old lines, <code>+</code> new lines.</p>
       <p>This works through <a href="https://herdr.dev">herdr</a>, a
-      terminal workspace manager for AI coding agents: run drift and your
-      agent in panes of the same herdr session and drift finds every
-      agent pane automatically, with its live idle/working state.</p>
+      terminal workspace manager for AI coding agents — or through plain
+      tmux. In herdr, drift finds every agent pane automatically, with
+      its live idle/working state; in tmux, agent panes are recognized
+      by their running process (claude, codex, aider, …) with the same
+      closest-first targeting, minus the idle/working state. Naming a
+      backend (<code>backend = "tmux"</code>) forces it from any
+      terminal.</p>
       <ul>
         <li>An agent split in drift's own tab is picked automatically —
         the drift-beside-claude layout never shows a picker.</li>

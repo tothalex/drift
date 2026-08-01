@@ -221,9 +221,12 @@ sees exactly what changed; unchanged code goes plain.
 ![sending a selection from drift to Claude Code](assets/agent.gif)
 
 This works through [herdr], a terminal workspace manager for AI coding
-agents: run drift and your agent(s) in panes of the same herdr session,
-and drift finds every agent pane automatically, with its live
-idle/working state. An agent split in drift's own tab wins outright —
+agents — or through plain tmux. In herdr, drift finds every agent pane
+automatically, with its live idle/working state. In tmux, agent panes
+are recognized by their running process (claude, codex, aider, …) with
+the same closest-first targeting; tmux just can't say whether an agent
+is idle or working. Auto-detection prefers herdr when drift runs inside
+both; `backend = "tmux"` forces tmux from anywhere. An agent split in drift's own tab wins outright —
 the drift-beside-claude layout never shows a picker. Otherwise one
 agent pane and the prompt goes straight there; several and a picker
 asks (closest first, each row saying where its agent is — "this tab",
@@ -235,8 +238,8 @@ away. The `[agent]` config section can pin a target for good:
 
 ```toml
 [agent]
-# backend = "auto"    # auto | herdr | off — "herdr" forces it even
-#                     # when drift runs outside the herdr session
+# backend = "auto"    # auto | herdr | tmux | off — naming one forces
+#                     # it even when drift runs outside that session
 # target = "claude"   # pin an agent name or pane id; empty = auto-pick
 # submit = true       # false: stage the prompt in the agent's input
 #                     # without pressing enter, to edit it there first
@@ -247,7 +250,7 @@ away. The `[agent]` config section can pin a target for good:
 
 drift never talks to a model itself — the prompt lands in the agent you
 already have open, with its context, session, and subscription. Other
-multiplexers (tmux, WezTerm, kitty) can plug into the same seam later.
+multiplexers (WezTerm, kitty) can plug into the same seam later.
 
 [herdr]: https://herdr.dev
 
