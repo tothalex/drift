@@ -11,10 +11,26 @@
 //! with a [`Backend`] variant — config parsing, auto-detection, and the
 //! target picker all follow from that table.
 
+mod cmux;
 mod herdr;
 mod tmux;
 
+use std::collections::HashMap;
+
 use anyhow::{Result, anyhow, bail};
+
+/// Process names that mark a pane as an agent, for the backends that
+/// have to recognize one from the process it runs. Matched against a
+/// process basename.
+pub(crate) const AGENT_NAMES: &[&str] = &[
+    "claude",
+    "codex",
+    "aider",
+    "gemini",
+    "goose",
+    "opencode",
+    "cursor-agent",
+];
 
 /// Default prompt template. `{input}` is the typed instruction; the
 /// other placeholders describe the selection.
@@ -49,9 +65,12 @@ pub enum Backend {
     Auto,
     Off,
     /// A specific backend, even when drift runs outside it (a
-    /// multiplexer's CLI reaches the default session regardless).
+    /// multiplexer's CLI reaches the default session regardless —
+    /// except cmux, whose socket only answers its own surfaces unless
+    /// its `socketControlMode` setting is widened).
     Herdr,
     Tmux,
+    Cmux,
 }
 
 /// One registered backend: its config name, how to tell drift is
@@ -62,26 +81,43 @@ struct BackendDef {
     /// The `agent.backend` config value.
     name: &'static str,
     backend: Backend,
-    /// Env var the multiplexer sets in its panes — the auto-detect probe.
+    /// The process that owns this backend's panes: whichever one
+    /// [`detect`] meets first walking up from drift is the session
+    /// drift is a pane of.
+    host_process: &'static str,
+    /// Env var the multiplexer sets in its panes — the fallback probe
+    /// for when the process table can't be read.
     inside_env: &'static str,
     make: fn() -> Box<dyn Bridge>,
 }
 
-/// herdr outranks tmux in auto-detection: a herdr session may itself
-/// sit inside tmux, and herdr's native agent tracking is the richer
-/// bridge wherever both would match.
+/// Order settles only the fallback probe, since a marker is inherited
+/// by whatever a pane starts: a multiplexer running inside cmux still
+/// sees `CMUX_SURFACE_ID`, so cmux ranks below both, or drift would aim
+/// at the cmux surface holding the whole session instead of the pane
+/// beside it. Between the two multiplexers herdr wins: its native agent
+/// tracking is the richer bridge wherever both would match.
 const BACKENDS: &[BackendDef] = &[
     BackendDef {
         name: "herdr",
         backend: Backend::Herdr,
+        host_process: "herdr",
         inside_env: herdr::INSIDE_ENV,
         make: herdr::make,
     },
     BackendDef {
         name: "tmux",
         backend: Backend::Tmux,
+        host_process: "tmux",
         inside_env: tmux::INSIDE_ENV,
         make: tmux::make,
+    },
+    BackendDef {
+        name: "cmux",
+        backend: Backend::Cmux,
+        host_process: "cmux",
+        inside_env: cmux::INSIDE_ENV,
+        make: cmux::make,
     },
 ];
 
@@ -109,21 +145,70 @@ impl Backend {
     }
 }
 
-/// The bridge for the environment drift runs in: `auto` probes each
-/// registered backend's environment marker, a named backend is built
-/// unconditionally, `off` disables the feature.
+/// The bridge for the session drift runs in: `auto` walks drift's own
+/// process ancestry, a named backend is built unconditionally, `off`
+/// disables the feature.
 pub fn detect(config: &AgentConfig) -> Option<Box<dyn Bridge>> {
     match config.backend {
         Backend::Off => None,
-        Backend::Auto => BACKENDS
-            .iter()
-            .find(|def| std::env::var_os(def.inside_env).is_some())
+        Backend::Auto => host_backend()
+            .or_else(marked_backend)
             .map(|def| (def.make)()),
         forced => BACKENDS
             .iter()
             .find(|def| def.backend == forced)
             .map(|def| (def.make)()),
     }
+}
+
+/// The session drift is a pane of, from the process that owns it.
+///
+/// An environment marker outlives the pane it names: a terminal opened
+/// from a herdr pane inherits that pane's `HERDR_PANE_ID`, and every
+/// pane inside it would claim to *be* that one pane — resolving to a
+/// live pane elsewhere, so nothing errors and the prompt just goes to
+/// the wrong place. A parent is what it is.
+fn host_backend() -> Option<&'static BackendDef> {
+    let processes = run_cli("ps", &["-A", "-o", "pid=,ppid=,comm="]).ok()?;
+    backend_of(std::process::id(), &parse_ancestry(&processes))
+}
+
+/// The nearest host among a pid's ancestors. Nearest, so a tmux session
+/// started inside a herdr pane resolves to tmux — the panes beside
+/// drift are tmux's, not herdr's.
+fn backend_of(pid: u32, tree: &HashMap<u32, (u32, &str)>) -> Option<&'static BackendDef> {
+    let mut at = pid;
+    // A pane's shell, an agent and a few forks sit under the host; the
+    // bound is only so a malformed table cannot spin.
+    for _ in 0..64 {
+        let (parent, name) = *tree.get(&at)?;
+        if let Some(def) = BACKENDS.iter().find(|def| def.host_process == name) {
+            return Some(def);
+        }
+        at = parent;
+    }
+    None
+}
+
+/// pid → (parent, process basename), from `ps -A -o pid=,ppid=,comm=`.
+fn parse_ancestry(processes: &str) -> HashMap<u32, (u32, &str)> {
+    processes
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            let parent = fields.next()?.parse().ok()?;
+            let command = fields.next()?;
+            Some((pid, (parent, command.rsplit('/').next().unwrap_or(command))))
+        })
+        .collect()
+}
+
+/// The environment marker, for when the process table is unreadable.
+fn marked_backend() -> Option<&'static BackendDef> {
+    BACKENDS
+        .iter()
+        .find(|def| std::env::var_os(def.inside_env).is_some())
 }
 
 /// One way of listing agent targets and typing a prompt into one.
@@ -266,9 +351,11 @@ mod tests {
         assert_eq!(Backend::parse(Some("off")).unwrap(), Backend::Off);
         assert_eq!(Backend::parse(Some("herdr")).unwrap(), Backend::Herdr);
         assert_eq!(Backend::parse(Some("tmux")).unwrap(), Backend::Tmux);
+        assert_eq!(Backend::parse(Some("cmux")).unwrap(), Backend::Cmux);
         let err = Backend::parse(Some("zellij")).unwrap_err().to_string();
         assert!(err.contains("\"herdr\""), "{err}");
         assert!(err.contains("\"tmux\""), "{err}");
+        assert!(err.contains("\"cmux\""), "{err}");
         assert!(err.contains("'zellij'"), "{err}");
     }
 
@@ -284,12 +371,60 @@ mod tests {
         assert_eq!(target.label(), "claude · this tab");
     }
 
+    /// drift, its shell, and the hosts above them. herdr and the tmux
+    /// server both detach, so each sits directly under launchd.
+    const PROCESSES: &str = "\
+    1     0 /sbin/launchd
+  786     1 /opt/homebrew/bin/herdr
+  900     1 tmux
+ 1000     1 /Applications/cmux.app/Contents/MacOS/cmux
+ 2000   786 -fish
+ 2001  2000 drift
+ 3000   900 -fish
+ 3001  3000 drift
+ 4000  1000 -fish
+ 4001  4000 drift
+ 5000     1 -fish
+ 5001  5000 drift";
+
+    #[test]
+    fn the_host_is_the_nearest_one_above_drift() {
+        let tree = parse_ancestry(PROCESSES);
+        let backend = |pid| backend_of(pid, &tree).map(|def| def.backend);
+        assert_eq!(backend(2001), Some(Backend::Herdr));
+        assert_eq!(backend(4001), Some(Backend::Cmux));
+        // No host above it at all — drift in a bare terminal.
+        assert_eq!(backend(5001), None);
+        // An unknown pid can't be placed.
+        assert_eq!(backend(9999), None);
+    }
+
+    /// A tmux session started inside a herdr pane: the panes beside
+    /// drift are tmux's, even though `HERDR_PANE_ID` is still in the
+    /// environment it inherited.
+    #[test]
+    fn a_nested_session_beats_the_one_it_runs_in() {
+        let nested = format!("{PROCESSES}\n   900   2000 tmux");
+        let tree = parse_ancestry(&nested);
+        assert_eq!(
+            backend_of(3001, &tree).map(|def| def.backend),
+            Some(Backend::Tmux)
+        );
+    }
+
+    #[test]
+    fn a_cyclic_process_table_resolves_to_no_host() {
+        let tree = parse_ancestry("100 200 -fish\n200 100 -fish");
+        assert!(backend_of(100, &tree).is_none());
+    }
+
     #[test]
     fn registered_backends_are_unique() {
         for (nth, def) in BACKENDS.iter().enumerate() {
             for other in &BACKENDS[nth + 1..] {
                 assert_ne!(def.name, other.name);
                 assert_ne!(def.backend, other.backend);
+                assert_ne!(def.host_process, other.host_process);
             }
         }
     }

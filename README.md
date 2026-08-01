@@ -223,12 +223,15 @@ sees exactly what changed; unchanged code goes plain.
 ![sending a selection from drift to Claude Code](assets/agent.gif)
 
 This works through [herdr], a terminal workspace manager for AI coding
-agents — or through plain tmux. In herdr, drift finds every agent pane
-automatically, with its live idle/working state. In tmux, agent panes
-are recognized by their running process (claude, codex, aider, …) with
-the same closest-first targeting; tmux just can't say whether an agent
-is idle or working. Auto-detection prefers herdr when drift runs inside
-both; `backend = "tmux"` forces tmux from anywhere. An agent split in drift's own tab wins outright —
+agents — or through plain tmux, or [cmux]. In herdr, drift finds every
+agent pane automatically, with its live idle/working state. In tmux and
+cmux, agent panes are recognized by their running process (claude,
+codex, aider, …) with the same closest-first targeting; neither can say
+whether an agent is idle or working. Auto-detection takes the innermost
+session drift runs inside — herdr or tmux ahead of the cmux surface
+holding them — and `backend = "tmux"` forces one from anywhere (cmux
+excepted: its socket answers only its own surfaces unless you widen
+`socketControlMode`). An agent split in drift's own tab wins outright —
 the drift-beside-claude layout never shows a picker. Otherwise one
 agent pane and the prompt goes straight there; several and a picker
 asks (closest first, each row saying where its agent is — "this tab",
@@ -240,11 +243,12 @@ away. The `[agent]` config section can pin a target for good:
 
 ```toml
 [agent]
-# backend = "auto"    # auto | herdr | tmux | off — naming one forces
-#                     # it even when drift runs outside that session
+# backend = "auto"    # auto | herdr | tmux | cmux | off — naming one
+#                     # forces it from outside that session too
 # target = "claude"   # pin an agent name or pane id; empty = auto-pick
 # submit = true       # false: stage the prompt in the agent's input
 #                     # without pressing enter, to edit it there first
+#                     # (cmux has no staging — it always submits)
 # template = "{input}\n\n{file}:{lines}\n```\n{code}\n```"
 #                     # {file} is the absolute path; {relfile} the
 #                     # repo-relative one, {start}/{end} bare numbers
@@ -255,6 +259,7 @@ already have open, with its context, session, and subscription. Other
 multiplexers (WezTerm, kitty) can plug into the same seam later.
 
 [herdr]: https://herdr.dev
+[cmux]: https://cmux.com
 
 ## Configuration
 

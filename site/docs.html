@@ -360,10 +360,11 @@
       <section id="config-agent">
         <h3><code>[agent]</code> — send code to an AI session</h3>
         <pre><span class="tbl">[agent]</span>
-<span class="c"># backend = "auto"     # auto | herdr | tmux | off — naming one forces</span>
-<span class="c">#                      # it even when drift runs outside that session</span>
+<span class="c"># backend = "auto"     # auto | herdr | tmux | cmux | off — naming one</span>
+<span class="c">#                      # forces it from outside that session too</span>
 <span class="c"># target = "claude"    # pin an agent name or pane id; empty = auto-pick</span>
 <span class="c"># submit = true        # false: stage the prompt without pressing enter</span>
+<span class="c">#                      # (cmux has no staging — it always submits)</span>
 <span class="c"># template = "{input}\n\n{file}:{lines}\n```\n{code}\n```"</span></pre>
         <p>Template placeholders: <code>{input}</code> is the typed
         instruction; <code>{file}</code> (absolute path),
@@ -476,12 +477,16 @@
       style — <code>-</code> old lines, <code>+</code> new lines.</p>
       <p>This works through <a href="https://herdr.dev">herdr</a>, a
       terminal workspace manager for AI coding agents — or through plain
-      tmux. In herdr, drift finds every agent pane automatically, with
-      its live idle/working state; in tmux, agent panes are recognized
-      by their running process (claude, codex, aider, …) with the same
-      closest-first targeting, minus the idle/working state. Naming a
-      backend (<code>backend = "tmux"</code>) forces it from any
-      terminal.</p>
+      tmux, or <a href="https://cmux.com">cmux</a>. In herdr, drift finds
+      every agent pane automatically, with its live idle/working state;
+      in tmux and cmux, agent panes are recognized by their running
+      process (claude, codex, aider, …) with the same closest-first
+      targeting, minus the idle/working state. Auto-detection takes the
+      innermost session drift runs inside — herdr or tmux ahead of the
+      cmux surface holding them — and naming a backend
+      (<code>backend = "tmux"</code>) forces it from any terminal, except
+      cmux, whose socket answers only its own surfaces unless you widen
+      its <code>socketControlMode</code> setting.</p>
       <ul>
         <li>An agent split in drift's own tab is picked automatically —
         the drift-beside-claude layout never shows a picker.</li>

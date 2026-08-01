@@ -11,22 +11,10 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use super::{AgentTarget, Bridge, Place, run_cli, short_path};
+use super::{AGENT_NAMES, AgentTarget, Bridge, Place, run_cli, short_path};
 
 /// tmux sets this in every pane — the "you are inside tmux" marker.
 pub(super) const INSIDE_ENV: &str = "TMUX";
-
-/// Process names that mark a pane as an agent. Matched against the
-/// basename of every process under the pane's shell.
-const AGENT_NAMES: &[&str] = &[
-    "claude",
-    "codex",
-    "aider",
-    "gemini",
-    "goose",
-    "opencode",
-    "cursor-agent",
-];
 
 pub(super) fn make() -> Box<dyn Bridge> {
     Box::new(Tmux {
