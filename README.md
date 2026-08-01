@@ -2,9 +2,9 @@
 
 A terminal UI for reviewing your working changes like a pull request:
 everything that differs from the base branch — committed or not — in one
-view.
+view. **[tothalex.github.io/drift](https://tothalex.github.io/drift/)**
 
-![drift reviewing a changeset](assets/screenshot.png)
+![launching drift in a repository with working changes](assets/launch.gif)
 
 The comparison point is `git merge-base <base> HEAD`, diffed against the
 working tree, so committed work, uncommitted edits, and untracked files
@@ -58,17 +58,17 @@ drift ~/some/repo  # review another repository
 drift --pr 123     # open pull request #123 right away
 ```
 
-## Features
+## The diff view
 
 The primary view is your own working changes — everything since the
 base branch, kept live as you edit:
 
 - Changes are shown inside their enclosing code block (function, class,
   if, …) resolved with tree-sitter, not as bare hunks; the scope can be
-  widened and narrowed. Rust, Python, JavaScript, TypeScript/TSX, and Go;
-  other files fall back to plain hunks.
-- Syntax highlighting, with changed lines marked by gutter accents and
-  word-level emphasis on the exact edit.
+  widened and narrowed with `[` and `]`. Other files fall back to plain
+  hunks.
+- Changed lines are marked by gutter accents and word-level emphasis on
+  the exact edit.
 - Comment-only lines render as prose with `TODO`/`FIXME` tags accented;
   unchanged comment blocks can be folded to a one-line summary.
 - Two-pane focus: `h` aims the cursor keys at the file tree, `l` at the
@@ -89,18 +89,21 @@ base branch, kept live as you edit:
 - Press `e` to open the file in your editor at the cursor's line
   (neovim by default, configurable — see below); edits show up in the
   diff the moment you save.
-- Press `s` to send the current line or visual selection to an AI agent
-  running in a sibling terminal pane (Claude Code, Codex, …) as a ready
-  prompt — see [Send to an AI agent](#send-to-an-ai-agent).
 - Review scopes: press `b` (or click the branch name in the status bar)
   to switch the base branch, then narrow the review to one commit or to
   untracked files only — or keep everything at once.
 - All views are precomputed on background threads — navigation stays
   instant regardless of changeset size.
 
-![choosing a review scope](assets/scopes.gif)
-
 Press `?` inside the app for all keybindings.
+
+## Syntax & themes
+
+Built-in highlighting for Rust, Python, JavaScript, TypeScript/TSX, and
+Go ships with the One Dark Pro palette. Every color is configurable —
+UI accents and the full syntax palette alike, with per-language
+overrides, and a custom theme is a single TOML file next to the config.
+See [Configuration](#configuration).
 
 ## Pull requests
 
@@ -110,7 +113,7 @@ to list the repository's open pull requests (GitHub) or merge requests
 progress, and search as the primary view, with the whole review
 conversation in place:
 
-![reviewing a pull request with an inline thread](assets/pr-review.png)
+![reviewing a pull request with an inline thread](assets/pr.gif)
 
 - Inline review threads sit under the exact diff lines they were written
   on, with their resolved/unresolved state; `T` folds a thread down to
@@ -166,6 +169,8 @@ agent's input: the instruction, the full `path:lines` location, and
 the selected code fenced below it. A selection that covers a change is
 sent unified-diff style — `-` old lines, `+` new lines — so the agent
 sees exactly what changed; unchanged code goes plain.
+
+![sending a selection from drift to Claude Code](assets/agent.gif)
 
 This works through [herdr], a terminal workspace manager for AI coding
 agents: run drift and your agent(s) in panes of the same herdr session,

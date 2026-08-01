@@ -63,6 +63,11 @@ flags change, update ALL of:
 4. `config.rs default_toml()` / `--init-config` docs when config
    changes, and the `?` help overlay via `keymap.rs HELP`.
 
+README GIFs are rendered with [vhs](https://github.com/charmbracelet/vhs)
+from the tapes in `assets/tapes/` against the fixture repo that
+`assets/tapes/setup-demo.sh` builds — regenerate them when the UI
+changes instead of screen-recording (each tape's header says how).
+
 The website (`site/`, deployed by `pages.yml` to GitHub Pages) is plain
 HTML/CSS/JS with no dependencies. Every color on it must be a value
 drift itself renders: the `theme.rs` palette, drift's ANSI-256 UI grays
