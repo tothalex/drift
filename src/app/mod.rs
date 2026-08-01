@@ -190,6 +190,15 @@ pub struct App {
     /// An editor launch requested by the last key, performed by the run
     /// loop (it needs the terminal handle).
     pending_editor: Option<(PathBuf, u32)>,
+    /// The language-install prompt: a curated language that could review
+    /// the shown file. `y` installs, `n`/Esc declines for the session;
+    /// every other key acts normally under it.
+    lang_prompt: Option<&'static str>,
+    /// Languages declined this session (or whose install failed) — never
+    /// re-prompted.
+    lang_declined: Vec<&'static str>,
+    /// A language install running on a background thread, if any.
+    lang_installing: Option<&'static str>,
     /// The in-app comment composer overlay, if open. It captures all
     /// keystrokes while set (like search input).
     compose: Option<Compose>,
@@ -242,6 +251,9 @@ impl App {
             agent_last: None,
             input_paused: Arc::new(AtomicBool::new(false)),
             pending_editor: None,
+            lang_prompt: None,
+            lang_declined: Vec::new(),
+            lang_installing: None,
             compose: None,
             pending_delete: None,
             keyboard_enhanced: false,
@@ -274,6 +286,11 @@ impl App {
 
     pub fn picker(&self) -> Option<&Picker> {
         self.picker.as_ref()
+    }
+
+    /// The language-install prompt to draw, if one is being offered.
+    pub fn lang_prompt(&self) -> Option<&'static str> {
+        self.lang_prompt
     }
 
     /// The open pull-request session, if any.
@@ -476,6 +493,7 @@ impl App {
         spawn_input_thread(self.events_tx.clone(), Arc::clone(&self.input_paused));
         spawn_watcher_thread(self.events_tx.clone(), self.vcs.root().to_path_buf());
         while !self.quit {
+            self.update_lang_prompt();
             terminal.draw(|frame| crate::ui::draw(frame, self))?;
             let result = match self.events_rx.recv()? {
                 AppEvent::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => {
@@ -508,6 +526,11 @@ impl App {
                 }
                 AppEvent::PrReady { seq, result } => self.on_pr_ready(seq, result),
                 AppEvent::PrPosted { seq, result } => self.on_pr_posted(seq, result),
+                AppEvent::LangProgress(line) => {
+                    self.notice = Some(line);
+                    Ok(())
+                }
+                AppEvent::LangInstalled { name, result } => self.on_lang_installed(name, result),
                 AppEvent::Tick => {
                     if self.forge_request.is_some() {
                         self.spinner = self.spinner.wrapping_add(1);
@@ -601,6 +624,22 @@ impl App {
                 _ => {}
             }
             return Ok(());
+        }
+        // The install prompt claims only its advertised keys; everything
+        // else keeps working under it (it's an offer, not a modal).
+        if let Some(name) = self.lang_prompt {
+            match key.code {
+                KeyCode::Char('y') => {
+                    self.start_lang_install(name);
+                    return Ok(());
+                }
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.lang_declined.push(name);
+                    self.lang_prompt = None;
+                    return Ok(());
+                }
+                _ => {}
+            }
         }
         // Vim-style count prefix: digits accumulate and repeat the next
         // motion (`10j`). A bare `0` only counts once a prefix started.
@@ -1699,6 +1738,68 @@ impl App {
         if let Some(row) = row {
             self.nav.set_cursor(row, self.tree_viewport());
             self.sync_current()?;
+        }
+        Ok(())
+    }
+
+    // --- language installs ---
+
+    /// Offer to install a curated language when the shown file would be
+    /// reviewable with it. Runs cheaply before every draw, so the offer
+    /// follows navigation (and PR sessions) by itself.
+    fn update_lang_prompt(&mut self) {
+        if self.lang_installing.is_some() {
+            self.lang_prompt = None;
+            return;
+        }
+        self.lang_prompt = self
+            .current_file()
+            .and_then(|file| crate::lang::installable_for(&file.path))
+            .filter(|name| !self.lang_declined.contains(name));
+    }
+
+    /// `y` on the prompt: fetch and compile on a background thread —
+    /// reviewing continues meanwhile — reporting into the status bar.
+    fn start_lang_install(&mut self, name: &'static str) {
+        self.lang_prompt = None;
+        self.lang_installing = Some(name);
+        self.notice = Some(format!("installing {name}…"));
+        let tx = self.events_tx.clone();
+        std::thread::spawn(move || {
+            let progress = tx.clone();
+            let result = crate::lang::cli::install_curated(name, &move |line: &str| {
+                // Multi-line notes collapse: the status bar is one row.
+                let line = line.lines().next().unwrap_or_default();
+                let _ = progress.send(AppEvent::LangProgress(format!("{name}: {line}")));
+            });
+            let _ = tx.send(AppEvent::LangInstalled {
+                name,
+                result: result.map_err(|err| format!("{err:#}")),
+            });
+        });
+    }
+
+    /// The background install finished: load the grammar into the live
+    /// registry and recompute views, so highlighting and block scoping
+    /// appear without restarting or losing the reviewer's place.
+    fn on_lang_installed(&mut self, name: &'static str, result: Result<(), String>) -> Result<()> {
+        self.lang_installing = None;
+        let registered = result
+            .and_then(|()| crate::lang::register_installed(name).map_err(|e| format!("{e:#}")));
+        match registered {
+            Ok(()) => {
+                self.notice = Some(format!("{name} installed"));
+                match self.pr.as_ref().map(|s| s.data.detail.number) {
+                    Some(number) => self.open_pr(number),
+                    None => self.refresh()?,
+                }
+            }
+            Err(err) => {
+                // A failing language would loop the prompt forever;
+                // decline it for the session and leave the error up.
+                self.lang_declined.push(name);
+                self.notice = Some(format!("installing {name} failed: {err}"));
+            }
         }
         Ok(())
     }

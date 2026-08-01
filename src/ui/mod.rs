@@ -2,6 +2,7 @@ mod compose;
 mod diff_view;
 mod file_list;
 mod help;
+mod lang_prompt;
 mod picker;
 mod status_bar;
 
@@ -85,6 +86,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.help_open() {
         help::draw(frame, app);
     }
+    lang_prompt::draw(frame, app);
     picker::draw(frame, app);
     compose::draw(frame, app);
 }

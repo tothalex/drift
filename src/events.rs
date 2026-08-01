@@ -53,6 +53,15 @@ pub enum AppEvent {
         seq: u64,
         result: Result<RefreshedComments, String>,
     },
+    /// Progress line from a background language install ("fetching …");
+    /// shown in the status bar as it happens.
+    LangProgress(String),
+    /// A background language install finished (the plugin is written and
+    /// compiled, but not yet in the registry — the main loop registers).
+    LangInstalled {
+        name: &'static str,
+        result: Result<(), String>,
+    },
     /// Spinner heartbeat while a forge request is in flight — the only
     /// time-driven redraws; the ticker thread stops when the wait ends.
     Tick,
