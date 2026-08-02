@@ -13,6 +13,7 @@ use crate::connect::{AgentConfig, Backend, TEMPLATE_DEFAULT};
 use crate::forge::ForgeConfig;
 use crate::keymap::{KEY_DEFAULTS, Keymap};
 use crate::theme::{THEME_DEFAULTS, THEME_LANG_DEFAULTS, Theme};
+use crate::update::UpdateConfig;
 
 /// Default editor command: `{line}` and `{file}` are substituted; the
 /// file path is appended when `{file}` doesn't appear.
@@ -38,6 +39,9 @@ struct ConfigFile {
     /// Send-to-agent integration; see [`AgentSection`].
     #[serde(default)]
     agent: AgentSection,
+    /// The new-release launch check; see [`UpdateSection`].
+    #[serde(default)]
+    update: UpdateSection,
     #[serde(default)]
     keys: HashMap<String, Vec<String>>,
     /// Flat color entries plus `[theme.<lang>]` per-language sub-tables,
@@ -112,6 +116,23 @@ impl AgentSection {
     }
 }
 
+/// The `[update]` section: whether launch checks for a newer release
+/// (at most one network request a day) and mentions it in the status bar.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateSection {
+    #[serde(default)]
+    check: Option<bool>,
+}
+
+impl UpdateSection {
+    fn into_config(self) -> UpdateConfig {
+        UpdateConfig {
+            check: self.check.unwrap_or(true),
+        }
+    }
+}
+
 /// Per-language theme sections: language name → key → color string.
 type LangThemes = HashMap<String, HashMap<String, String>>;
 
@@ -147,6 +168,7 @@ pub struct Config {
     pub editor: String,
     pub forge: ForgeConfig,
     pub agent: AgentConfig,
+    pub update: UpdateConfig,
     pub keymap: Keymap,
     pub theme: Theme,
 }
@@ -206,6 +228,7 @@ fn load_at(path: &Path) -> Result<Config> {
         editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
         forge,
         agent,
+        update: file.update.into_config(),
         keymap,
         theme,
     })
@@ -287,7 +310,11 @@ pub fn default_toml() -> String {
          # backend = \"auto\"         # auto | herdr | tmux | cmux | off\n\
          # target = \"\"              # pin an agent name or pane id\n\
          # submit = true            # press enter after inserting\n\
-         # template = \"{input}\\n\\n{file}:{lines}\\n```\\n{code}\\n```\"\n\n[keys]\n",
+         # template = \"{input}\\n\\n{file}:{lines}\\n```\\n{code}\\n```\"\n\n\
+         # Launch checks GitHub for a newer release (at most once a day)\n\
+         # and mentions it in the status bar; `drift update` installs it.\n\
+         # [update]\n\
+         # check = true\n\n[keys]\n",
     );
     for (name, _, keys) in KEY_DEFAULTS {
         let list = keys
@@ -419,6 +446,17 @@ mod tests {
         std::fs::write(&config_path, "[agent]\nbackend = \"zellij\"\n").unwrap();
         let err = load_at(&config_path).err().expect("must fail").to_string();
         assert!(err.contains("invalid [agent]"), "{err}");
+    }
+
+    #[test]
+    fn update_section_parses_and_defaults_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(&config_path, "[update]\ncheck = false\n").unwrap();
+        assert!(!load_at(&config_path).unwrap().update.check);
+
+        std::fs::write(&config_path, "").unwrap();
+        assert!(load_at(&config_path).unwrap().update.check);
     }
 
     #[test]

@@ -49,6 +49,20 @@ if something misbehaves, please
 
 Or build from source on any platform: see [Build](#build).
 
+**Updating**
+
+```sh
+drift update           # install the latest release in place
+drift update --check   # just report whether one exists
+```
+
+drift also checks GitHub for a newer release on launch (at most once a
+day) and mentions it in the status bar; disable with `check = false`
+under `[update]` in the config. The self-update replaces the running
+binary only — installs managed by cargo or homebrew are refused with
+the right command instead. If highlighting breaks after an update,
+rebuild the grammar plugins: `drift lang build`.
+
 ## Usage
 
 ```sh

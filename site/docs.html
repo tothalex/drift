@@ -195,6 +195,7 @@
     <a class="sub" href="#config-theme">[theme]</a>
     <a class="sub" href="#config-forge">[forge]</a>
     <a class="sub" href="#config-agent">[agent]</a>
+    <a class="sub" href="#config-update">[update]</a>
     <a href="#languages">Language plugins</a>
     <a href="#pull-requests">Pull requests</a>
     <a href="#ai-agents">AI agents</a>
@@ -220,6 +221,13 @@
       folder to your user <code>PATH</code>. Windows Terminal is
       recommended.</p>
       <p>Or <a href="#build">build from source</a> on any platform.</p>
+      <p><b>Updating</b> — <code>drift update</code> installs the latest
+      release in place (<code>--check</code> just reports). drift also
+      checks for a newer release on launch, at most once a day, and
+      mentions it in the status bar — disable under
+      <a href="#config-update"><code>[update]</code></a>. Installs
+      managed by cargo or homebrew are refused with the right command
+      instead.</p>
     </section>
 
     <section id="usage">
@@ -235,6 +243,7 @@
         <tr><td>--pr &lt;number&gt;</td><td>Open this pull request / merge request immediately (needs an authenticated <code>gh</code> or <code>glab</code>).</td></tr>
         <tr><td>--init-config</td><td>Write the fully documented default config to <code>~/.config/drift/config.toml</code> and exit.</td></tr>
         <tr><td>lang &lt;command&gt;</td><td>Manage <a href="#languages">language plugins</a>: <code>install</code>, <code>build</code>, <code>list</code>, <code>remove</code>.</td></tr>
+        <tr><td>update [--check]</td><td>Update drift to the latest release, or just report one with <code>--check</code>. Needs <code>curl</code> and <code>tar</code>.</td></tr>
         <tr><td>-V, --version</td><td>Print the version.</td></tr>
       </table>
       <p>The comparison point is <code>git merge-base &lt;base&gt; HEAD</code>,
@@ -371,6 +380,16 @@
         <code>{relfile}</code> (repo-relative), <code>{lines}</code>
         ("12" or "12-18"), <code>{start}</code>, <code>{end}</code>, and
         <code>{code}</code> describe the selection.</p>
+      </section>
+
+      <section id="config-update">
+        <h3><code>[update]</code> — the new-release check</h3>
+        <pre><span class="tbl">[update]</span>
+<span class="c"># check = true         # look for a newer release on launch (at most</span>
+<span class="c">#                      # once a day) and mention it in the status bar</span></pre>
+        <p>The check reads only where
+        <code>releases/latest</code> redirects — no API, nothing sent.
+        Installing is always explicit: <code>drift update</code>.</p>
       </section>
     </section>
 

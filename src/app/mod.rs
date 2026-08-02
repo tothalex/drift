@@ -208,6 +208,8 @@ pub struct App {
     /// The terminal disambiguates modified keys (kitty protocol), so
     /// shift+enter is distinguishable from enter in the composer.
     keyboard_enhanced: bool,
+    /// The `[update]` config: whether launch checks for a newer release.
+    update_check: bool,
     quit: bool,
 }
 
@@ -257,6 +259,7 @@ impl App {
             compose: None,
             pending_delete: None,
             keyboard_enhanced: false,
+            update_check: config.update.check,
             quit: false,
         };
         app.reload()?;
@@ -492,6 +495,9 @@ impl App {
         self.keyboard_enhanced = push_keyboard_enhancement();
         spawn_input_thread(self.events_tx.clone(), Arc::clone(&self.input_paused));
         spawn_watcher_thread(self.events_tx.clone(), self.vcs.root().to_path_buf());
+        if self.update_check {
+            crate::update::spawn_launch_check(self.events_tx.clone());
+        }
         while !self.quit {
             self.update_lang_prompt();
             terminal.draw(|frame| crate::ui::draw(frame, self))?;
@@ -531,6 +537,14 @@ impl App {
                     Ok(())
                 }
                 AppEvent::LangInstalled { name, result } => self.on_lang_installed(name, result),
+                AppEvent::UpdateAvailable { version } => {
+                    // Never clobber a notice in use — loading states,
+                    // errors and prompts all matter more.
+                    if self.notice.is_none() {
+                        self.notice = Some(format!("drift {version} is out — run: drift update"));
+                    }
+                    Ok(())
+                }
                 AppEvent::Tick => {
                     if self.forge_request.is_some() {
                         self.spinner = self.spinner.wrapping_add(1);

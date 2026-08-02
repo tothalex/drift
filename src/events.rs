@@ -62,6 +62,11 @@ pub enum AppEvent {
         name: &'static str,
         result: Result<(), String>,
     },
+    /// The launch check found a newer release; shown as a status-bar
+    /// notice unless something more urgent is already there.
+    UpdateAvailable {
+        version: String,
+    },
     /// Spinner heartbeat while a forge request is in flight — the only
     /// time-driven redraws; the ticker thread stops when the wait ends.
     Tick,

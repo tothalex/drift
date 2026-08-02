@@ -35,6 +35,13 @@ pub enum Command {
         #[command(subcommand)]
         command: LangCommand,
     },
+    /// Update drift to the latest release. Requires curl and tar; refuses
+    /// installs managed by cargo or homebrew.
+    Update {
+        /// Only report whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

@@ -10,4 +10,5 @@ pub mod processor;
 pub mod theme;
 pub mod tree;
 pub mod ui;
+pub mod update;
 pub mod vcs;
