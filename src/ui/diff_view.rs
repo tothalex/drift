@@ -14,7 +14,7 @@ use crate::processor::comments;
 use crate::processor::highlight::{HighlightSpan, TokenKind};
 use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
-use crate::ui::{header_style, search_range};
+use crate::ui::{CODE_GUTTER, header_style, search_range};
 use crate::vcs::model::{DiffLine, LineKind};
 
 pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
@@ -57,21 +57,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
     // The code pane's own search query highlights on every matching row.
     let search = (!app.code_search().is_empty()).then(|| app.code_search().to_lowercase());
 
-    // Scroll math first, so only the visible window of lines is ever
-    // built — per-keystroke render cost is O(viewport), not O(file).
-    // Center-scrolling keeps the cursor line mid-view, easing off at the
-    // start and end of the file so the pane always stays full.
+    // The window is assembled in visual rows: a line wider than the pane
+    // wraps (vim-like) instead of clipping, so one view line can occupy
+    // several rows. Walking up from the cursor by wrapped heights keeps
+    // it centered, easing off at the start and end of the file so the
+    // pane always stays full. Per-keystroke render cost is O(viewport),
+    // not O(file) — only lines near the window are ever built.
     let total = app.current_view().map_or(0, FileView::flat_len);
     let height = content.height as usize;
+    let width = content.width as usize;
     let cursor = app.code.cursor.min(total.saturating_sub(1));
-    let max_scroll = total.saturating_sub(height);
-    let centered = cursor.saturating_sub(height / 2).min(max_scroll);
-    // Free-scroll (mouse wheel) offsets the centered position.
-    let scroll = (centered as isize + app.code.view_offset).clamp(0, max_scroll as isize) as usize;
-    app.code.scroll = scroll;
+    let view_offset = app.code.view_offset;
 
     // Per-row styling: visual selection under the cursorline; the
-    // cursorline hides while a mouse selection is in progress.
+    // cursorline hides while a mouse selection is in progress. Applied
+    // to every visual row of the view line.
     let style_row = |index: usize, mut line: Line<'static>| {
         if selection.is_some_and(|(from, to)| (from..=to).contains(&index)) {
             line.style = line.style.patch(Style::default().bg(theme.select_bg));
@@ -82,24 +82,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
         line
     };
 
-    let lines: Vec<Line> = match app.current_view() {
-        None => Vec::new(),
-        Some(FileView::Binary) => {
-            vec![style_row(0, Line::styled(" binary file changed", dim))]
-        }
-        Some(FileView::Unchanged) => vec![style_row(
+    // rows/row_map are per visual row; row_map records (view line, chars
+    // of it consumed before the row) for mouse translation. `offset` is
+    // view_offset re-clamped to the content.
+    let (rows, row_map, offset): (Vec<Line>, Vec<(usize, usize)>, isize) = match app.current_view()
+    {
+        None => (Vec::new(), Vec::new(), 0),
+        Some(FileView::Binary) => (
+            vec![style_row(0, Line::styled(" binary file changed", dim))],
+            vec![(0, 0)],
             0,
-            Line::styled(" no content changes (rename or mode change)", dim),
-        )],
-        Some(view @ FileView::Sections { .. }) => view
-            .flat_lines()
-            .enumerate()
-            .skip(scroll)
-            .take(height)
-            .map(|(index, flat)| {
+        ),
+        Some(FileView::Unchanged) => (
+            vec![style_row(
+                0,
+                Line::styled(" no content changes (rename or mode change)", dim),
+            )],
+            vec![(0, 0)],
+            0,
+        ),
+        Some(view @ FileView::Sections { .. }) => {
+            let flats: Vec<FlatLine> = view.flat_lines().collect();
+            let build = |index: usize, flat: &FlatLine| {
                 let marked = action
                     .as_ref()
-                    .is_some_and(|(spot, _)| spot_marks(spot, &flat, current_path.as_deref()));
+                    .is_some_and(|(spot, _)| spot_marks(spot, flat, current_path.as_deref()));
                 let mut line = match flat {
                     FlatLine::Separator => Line::default(),
                     FlatLine::Line(ViewLine::Collapsed { count }) => Line::styled(
@@ -165,12 +172,116 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
                         Style::default().fg(theme.thread),
                     ));
                 }
-                style_row(index, line)
-            })
-            .collect(),
+                line
+            };
+
+            let gutter = CODE_GUTTER as usize;
+            // Top line: walk up from the cursor until about half the
+            // pane's rows sit above it.
+            let mut centered = cursor;
+            let mut above = 0;
+            while centered > 0 {
+                let h = wrap_line(build(centered - 1, &flats[centered - 1]), width, gutter).len();
+                if above + h > height / 2 {
+                    break;
+                }
+                centered -= 1;
+                above += h;
+            }
+            // Free-scroll (mouse wheel) offsets the centered position.
+            let mut top = centered
+                .saturating_add_signed(view_offset)
+                .min(total.saturating_sub(1));
+            let mut rows = Vec::with_capacity(height);
+            let mut map = Vec::with_capacity(height);
+            let mut index = top;
+            while index < total && rows.len() < height {
+                for (row, start) in wrap_line(build(index, &flats[index]), width, gutter) {
+                    if rows.len() == height {
+                        break;
+                    }
+                    rows.push(style_row(index, row));
+                    map.push((index, start));
+                }
+                index += 1;
+            }
+            // Ease off at the end of the file: pull the top up until the
+            // pane is full again.
+            while rows.len() < height && top > 0 {
+                top -= 1;
+                for (at, (row, start)) in wrap_line(build(top, &flats[top]), width, gutter)
+                    .into_iter()
+                    .enumerate()
+                {
+                    rows.insert(at, style_row(top, row));
+                    map.insert(at, (top, start));
+                }
+            }
+            // A bottom-anchored pull may overshoot; the pulled-in line
+            // then shows only its tail rows.
+            if rows.len() > height {
+                let cut = rows.len() - height;
+                rows.drain(..cut);
+                map.drain(..cut);
+            }
+            (rows, map, top as isize - centered as isize)
+        }
     };
 
-    frame.render_widget(Paragraph::new(lines), content);
+    app.code.view_offset = offset;
+    app.code.row_map = row_map;
+    frame.render_widget(Paragraph::new(rows), content);
+}
+
+/// Split a styled line into visual rows of at most `width` cells;
+/// continuation rows hang behind a blank `indent`-column prefix so
+/// wrapped code stays clear of the gutter. Each row carries the count
+/// of the line's chars consumed before it — the renderer's row map
+/// translates mouse positions back to content chars with it. Wrapping
+/// is display-only: cursor, selections and yanks stay on view lines.
+fn wrap_line(line: Line<'static>, width: usize, indent: usize) -> Vec<(Line<'static>, usize)> {
+    let mut rows = Vec::new();
+    if width == 0 {
+        rows.push((line, 0));
+        return rows;
+    }
+    let indent = indent.min(width - 1);
+    let style = line.style;
+    let mut spans: Vec<Span> = Vec::new();
+    let mut cells = 0; // cells filled in the current row
+    let mut floor = 0; // cells the current row starts with (its indent)
+    let mut chars = 0; // chars of the line consumed so far
+    let mut start = 0; // chars consumed before the current row
+    for span in line.spans {
+        let mut buf = String::new();
+        for c in span.content.chars() {
+            let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+            // Break before overflowing — unless the row holds nothing
+            // yet, where an over-wide cell is placed rather than looped.
+            if cells + w > width && cells > floor {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut buf), span.style));
+                }
+                let mut row = Line::from(std::mem::take(&mut spans));
+                row.style = style;
+                rows.push((row, start));
+                spans.push(Span::raw(" ".repeat(indent)));
+                cells = indent;
+                floor = indent;
+                start = chars;
+            }
+            buf.push(c);
+            cells += w;
+            chars += 1;
+        }
+        if !buf.is_empty() {
+            spans.push(Span::styled(buf, span.style));
+        }
+    }
+    let mut row = Line::from(spans);
+    row.style = style;
+    rows.push((row, start));
+    rows
 }
 
 /// Does the in-flight mutation's spot land on this row? Diff lines also
@@ -437,4 +548,65 @@ fn token_style(theme: &Theme, lang: Option<&HashMap<String, Color>>, token: Toke
 
 fn lineno(no: Option<u32>) -> String {
     no.map(|n| n.to_string()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn texts(rows: &[(Line<'static>, usize)]) -> Vec<String> {
+        rows.iter()
+            .map(|(line, _)| line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    fn starts(rows: &[(Line<'static>, usize)]) -> Vec<usize> {
+        rows.iter().map(|(_, start)| *start).collect()
+    }
+
+    #[test]
+    fn short_line_stays_one_row() {
+        let rows = wrap_line(Line::from("abc"), 10, 6);
+        assert_eq!(texts(&rows), vec!["abc"]);
+        assert_eq!(starts(&rows), vec![0]);
+    }
+
+    #[test]
+    fn long_line_wraps_with_hanging_indent() {
+        // A 6-cell gutter followed by content, like a diff row.
+        let line = Line::from(vec![Span::raw("▎  42 "), Span::raw("abcdefghij")]);
+        let rows = wrap_line(line, 10, 6);
+        assert_eq!(texts(&rows), vec!["▎  42 abcd", "      efgh", "      ij"]);
+        // Row starts count the line's own chars (gutter included), not
+        // the injected indent prefixes.
+        assert_eq!(starts(&rows), vec![0, 10, 14]);
+    }
+
+    #[test]
+    fn styles_survive_the_split() {
+        let styled = Style::default().fg(Color::Red);
+        let line = Line::from(vec![Span::raw("aaaa"), Span::styled("bbbb", styled)]);
+        let rows = wrap_line(line, 6, 2);
+        assert_eq!(texts(&rows), vec!["aaaabb", "  bb"]);
+        // The split span keeps its style on both sides.
+        assert_eq!(rows[0].0.spans.last().unwrap().style, styled);
+        assert_eq!(rows[1].0.spans.last().unwrap().style, styled);
+    }
+
+    #[test]
+    fn wide_chars_wrap_by_cells_not_chars() {
+        let rows = wrap_line(Line::from("日本語は広い"), 5, 0);
+        // Each char is 2 cells: only two fit in 5.
+        assert_eq!(texts(&rows), vec!["日本", "語は", "広い"]);
+        assert_eq!(starts(&rows), vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn empty_and_degenerate_widths_yield_one_row() {
+        assert_eq!(wrap_line(Line::default(), 10, 6).len(), 1);
+        assert_eq!(wrap_line(Line::from("abc"), 0, 6).len(), 1);
+        // An indent as wide as the pane still leaves one content cell.
+        let rows = wrap_line(Line::from("abcd"), 2, 6);
+        assert_eq!(texts(&rows), vec!["ab", " c", " d"]);
+    }
 }

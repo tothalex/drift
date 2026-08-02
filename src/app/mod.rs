@@ -1500,7 +1500,6 @@ impl App {
         let in_tree = self.layout.tree_area.contains(position);
         let in_code = self.layout.code_area.contains(position);
         let tree_viewport = self.tree_viewport();
-        let code_viewport = self.code_viewport();
         match mouse.kind {
             // The comparison segment at the status bar's left edge opens
             // the picker, mirroring the pick_base key (or, in a PR
@@ -1523,12 +1522,8 @@ impl App {
             }
             MouseEventKind::ScrollDown if in_tree => self.nav.scroll(3, tree_viewport),
             MouseEventKind::ScrollUp if in_tree => self.nav.scroll(-3, tree_viewport),
-            MouseEventKind::ScrollDown if in_code => {
-                self.code.scroll_view(3, code_viewport, self.view_len());
-            }
-            MouseEventKind::ScrollUp if in_code => {
-                self.code.scroll_view(-3, code_viewport, self.view_len());
-            }
+            MouseEventKind::ScrollDown if in_code => self.code.scroll_view(3),
+            MouseEventKind::ScrollUp if in_code => self.code.scroll_view(-3),
             MouseEventKind::Down(MouseButton::Left) if in_tree => {
                 self.focus = Pane::Tree;
                 let row = (mouse.row - self.layout.tree_area.y) as usize + self.nav.offset();
@@ -2354,12 +2349,17 @@ impl App {
         );
     }
 
-    /// Screen position → (view line, char column); the gutter columns map
-    /// to char 0.
+    /// Screen position → (view line, char column) through the renderer's
+    /// row map — long lines wrap, so a screen row is not a view line. The
+    /// gutter columns map to char 0; on continuation rows, to the first
+    /// char the row shows.
     fn position_to_text(&self, position: Position) -> TextPos {
         let area = self.layout.code_area;
-        let line = (position.y.saturating_sub(area.y)) as usize + self.code.scroll;
-        let ch = position.x.saturating_sub(area.x + CODE_GUTTER) as usize;
+        let row = position.y.saturating_sub(area.y) as usize;
+        let map = &self.code.row_map;
+        let (line, start) = map.get(row).or(map.last()).copied().unwrap_or((0, 0));
+        let ch = start.saturating_sub(CODE_GUTTER as usize)
+            + position.x.saturating_sub(area.x + CODE_GUTTER) as usize;
         (line.min(self.view_len().saturating_sub(1)), ch)
     }
 

@@ -83,6 +83,9 @@ base branch, kept live as you edit:
   hunks.
 - Changed lines are marked by gutter accents and word-level emphasis on
   the exact edit.
+- Long lines wrap at the pane edge (vim-style, hanging behind the
+  gutter) instead of clipping. Wrapping is display-only: motions,
+  visual mode, yanks and send-to-agent all stay on real lines.
 - Comment-only lines render as prose with `TODO`/`FIXME` tags accented;
   unchanged comment blocks can be folded to a one-line summary.
 - Two-pane focus: `h` aims the cursor keys at the file tree, `l` at the

@@ -9,11 +9,14 @@ pub struct CodeView {
     /// it centered.
     pub cursor: usize,
     /// Free-scroll offset on top of the centered position (mouse wheel);
-    /// reset by any cursor motion.
+    /// reset by any cursor motion, re-clamped by the renderer (only it
+    /// knows wrapped line heights).
     pub view_offset: isize,
-    /// Scroll position from the last render — the basis for translating
+    /// What the last render put on each visual row: (view line, chars of
+    /// that line consumed before the row) — long lines wrap, so screen
+    /// rows and view lines don't map 1:1. The basis for translating
     /// mouse coordinates to text positions. Written by the renderer.
-    pub scroll: usize,
+    pub row_map: Vec<(usize, usize)>,
     /// Visual mode: anchor line of the selection (`v` toggles).
     pub select_anchor: Option<usize>,
     /// Mouse drag-selection, char-precise (press position, drag position).
@@ -34,7 +37,7 @@ impl CodeView {
         CodeView {
             cursor: 0,
             view_offset: 0,
-            scroll: 0,
+            row_map: Vec::new(),
             select_anchor: None,
             mouse_sel: None,
             pending_center: true,
@@ -62,12 +65,11 @@ impl CodeView {
         self.view_offset = 0;
     }
 
-    /// Scroll the viewport without moving the cursor, clamped to the
-    /// content; the cursor may leave the visible window.
-    pub fn scroll_view(&mut self, delta: isize, viewport: usize, len: usize) {
-        let max_scroll = len.saturating_sub(viewport) as isize;
-        let base = (self.cursor.saturating_sub(viewport / 2) as isize).min(max_scroll);
-        self.view_offset = (self.view_offset + delta).clamp(-base, max_scroll - base);
+    /// Scroll the viewport without moving the cursor; the cursor may
+    /// leave the visible window. The renderer clamps to the content and
+    /// normalizes the offset back — wrapped line heights live there.
+    pub fn scroll_view(&mut self, delta: isize) {
+        self.view_offset += delta;
     }
 
     /// Place the cursor on the middle line of the viewport — or of the
