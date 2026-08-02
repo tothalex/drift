@@ -167,7 +167,8 @@ impl FileTree {
         self.visible.iter().map(|&id| &self.nodes[id])
     }
 
-    fn row(&self, i: usize) -> Option<&Node> {
+    /// The node at visible row `i`.
+    pub fn row(&self, i: usize) -> Option<&Node> {
         self.visible.get(i).map(|&id| &self.nodes[id])
     }
 

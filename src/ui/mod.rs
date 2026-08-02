@@ -83,6 +83,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     diff_view::draw(frame, app, code_header, code_content);
     status_bar::draw(frame, app, status);
+    // The clipped-name tooltip stays under the modal overlays.
+    if app.layout.tree_visible
+        && !app.help_open()
+        && app.picker().is_none()
+        && app.compose().is_none()
+    {
+        file_list::draw_path_tooltip(frame, app);
+    }
     if app.help_open() {
         help::draw(frame, app);
     }

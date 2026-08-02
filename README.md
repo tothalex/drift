@@ -96,7 +96,8 @@ base branch, kept live as you edit:
   they hop between the changes themselves, so large files navigate by
   edit, not by scrolling.
 - File tree with review progress: check files off as you go, navigation
-  skips what's done.
+  skips what's done. A name clipped by a narrow pane shows its full
+  path in a tooltip under the cursor.
 - Vim-style keys (counts, `g`/`G`, visual mode, yank) and full mouse
   support (wheel per pane, click, drag-to-copy, pane resize).
 - Live reload: the working tree is watched, so edits made outside the

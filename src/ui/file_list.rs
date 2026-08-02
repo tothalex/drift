@@ -2,7 +2,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Pane};
 use crate::theme::Theme;
@@ -77,6 +78,61 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
         .collect();
 
     frame.render_widget(Paragraph::new(rows), content);
+}
+
+/// A one-line overlay under the tree cursor with the node's full
+/// repo-relative path — shown only while the tree pane has focus and
+/// the cursored row is clipped by the pane edge. Pure rendering: keys
+/// and mouse hit-testing are untouched.
+pub fn draw_path_tooltip(frame: &mut Frame, app: &App) {
+    if app.focused_pane() != Pane::Tree {
+        return;
+    }
+    let area = app.layout.tree_area;
+    let cursor = app.nav.cursor;
+    let offset = app.nav.offset();
+    if cursor < offset || cursor >= offset + area.height as usize {
+        return; // the cursored row is scrolled out of view
+    }
+    let Some(node) = app.nav.tree.row(cursor) else {
+        return;
+    };
+    // The PR session's virtual conversation entry has no real path.
+    let conversation = matches!(node.kind, crate::tree::NodeKind::File { index, .. }
+        if app.is_pr_conversation(index));
+    let (label, path) = if conversation {
+        let label = app.pr_conversation_label();
+        (label.clone(), label)
+    } else {
+        (node.label.clone(), node.path.clone())
+    };
+    // Rows render as indent + a two-cell marker + the label.
+    let row_width = node.depth * 2 + 2 + label.as_str().width();
+    if row_width <= area.width as usize {
+        return; // the name fits — stay quiet
+    }
+
+    let text = format!(" {path} ");
+    let width = (text.as_str().width() as u16).min(frame.area().width.saturating_sub(area.x));
+    let row_y = area.y + (cursor - offset) as u16;
+    // Below the cursored row; above it when that would hit the status
+    // bar on the terminal's last row.
+    let y = if row_y + 1 < frame.area().height.saturating_sub(1) {
+        row_y + 1
+    } else {
+        row_y.saturating_sub(1)
+    };
+    let panel = Rect {
+        x: area.x,
+        y,
+        width,
+        height: 1,
+    };
+    frame.render_widget(Clear, panel);
+    frame.render_widget(
+        Paragraph::new(text).style(Style::default().bg(app.theme.panel_bg)),
+        panel,
+    );
 }
 
 /// A row label, with the tree query's match highlighted within it.
