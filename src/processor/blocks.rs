@@ -10,7 +10,9 @@ pub struct Block {
 }
 
 /// Resolves the semantic blocks enclosing a changed line range, innermost
-/// first (e.g. `[if, fn, impl]`). Empty when the change sits at top level.
+/// first (e.g. `[if, fn, impl]`). A changed comment outside any block
+/// resolves to the block it documents (or to the comment run itself);
+/// empty only when the change sits at top level and is not a comment.
 ///
 /// Implemented by the tree-sitter resolver; an indentation-heuristic
 /// resolver for unsupported languages can slot in later.

@@ -581,6 +581,70 @@ export function b(): number {
     }
 
     #[test]
+    fn changed_doc_comment_does_not_drag_in_the_previous_function() {
+        // Regression: a renamed route in a doc comment sits at top level,
+        // and its fallback context window used to reach back into the
+        // previous function's tail, prefixing the section with orphan
+        // `}` / `return x;` / `};` lines. The comment must attach to the
+        // function it documents instead.
+        let source = "\
+export const first = (): number => {
+    return 1;
+};
+
+/** GET /things — docs. */
+export const second = (): number => {
+    const url = \"/things\";
+    return url.length;
+};
+";
+        let patch = "\
+@@ -2,7 +2,7 @@
+     return 1;
+ };
+
+-/** GET /things/mine — docs. */
++/** GET /things — docs. */
+ export const second = (): number => {
+-    const url = \"/things/mine\";
++    const url = \"/things\";
+     return url.length;";
+        let diff = unidiff::parse(patch);
+        let FileView::Sections { sections, .. } = process(
+            Path::new("x.ts"),
+            &diff,
+            Some(source),
+            None,
+            ViewOptions::default(),
+        ) else {
+            panic!("expected sections");
+        };
+        assert_eq!(sections.len(), 1);
+        let contents: Vec<String> = sections[0]
+            .lines
+            .iter()
+            .map(|l| match l {
+                ViewLine::Diff { line, .. } => line.content.clone(),
+                _ => panic!("expected diff line"),
+            })
+            .collect();
+        // Comment run through the function's closing brace, both
+        // removals in place — nothing from `first`.
+        assert_eq!(
+            contents,
+            vec![
+                "/** GET /things/mine — docs. */",
+                "/** GET /things — docs. */",
+                "export const second = (): number => {",
+                "    const url = \"/things/mine\";",
+                "    const url = \"/things\";",
+                "    return url.length;",
+                "};",
+            ]
+        );
+    }
+
+    #[test]
     fn unparseable_file_falls_back_to_hunks() {
         let diff = unidiff::parse(PATCH);
         let view = process(
