@@ -2086,14 +2086,18 @@ impl App {
         Ok(())
     }
 
-    /// Options changed: recompute the visible view, keep the cursor, and
-    /// re-warm the rest in the background.
+    /// Options changed: recompute the visible view, keep the cursor on
+    /// the same line, and re-warm the rest in the background.
     fn reload_current_view(&mut self) -> Result<()> {
+        let lineno = self
+            .current_view()
+            .and_then(|view| view.lineno_at(self.code.cursor));
         self.cache.clear_views();
         self.code.select_anchor = None;
         if let Some(index) = self.current {
             self.ensure_view(index)?;
         }
+        self.reanchor_cursor(lineno);
         self.start_prefetch();
         Ok(())
     }
@@ -2112,7 +2116,6 @@ impl App {
         let next = current.saturating_add_signed(delta).min(scope_max);
         if next != current {
             self.cache.scope = next;
-            self.code.reset_for_new_view();
             // Global option changed: every cached view is stale.
             self.reload_current_view()?;
         }
