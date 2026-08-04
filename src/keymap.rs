@@ -40,6 +40,7 @@ pub enum Action {
     GrowTree,
     ShrinkTree,
     PickBase,
+    PickScope,
     PickPr,
     Comment,
     CommentGeneral,
@@ -81,6 +82,7 @@ pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("grow_tree", Action::GrowTree, &[">"]),
     ("shrink_tree", Action::ShrinkTree, &["<"]),
     ("pick_base", Action::PickBase, &["b"]),
+    ("pick_scope", Action::PickScope, &["B"]),
     ("pick_pr", Action::PickPr, &["p", "P"]),
     ("comment", Action::Comment, &["a"]),
     ("comment_general", Action::CommentGeneral, &["A"]),
@@ -232,6 +234,10 @@ const HELP: &[(&[Action], &str)] = &[
     ),
     (&[Action::OpenEditor], "open the file in your editor"),
     (&[Action::PickBase], "choose base branch, then review scope"),
+    (
+        &[Action::PickScope],
+        "review scope on the current base (one commit, …)",
+    ),
     (&[Action::PickPr], "open a pull request from the forge"),
     (
         &[Action::Comment],

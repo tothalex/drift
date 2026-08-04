@@ -765,10 +765,11 @@ impl App {
             Action::CopyPath => self.copy_path(),
             Action::GrowTree => self.layout.resize(2 * count),
             Action::ShrinkTree => self.layout.resize(-2 * count),
-            Action::PickBase if self.pr.is_some() => {
+            Action::PickBase | Action::PickScope if self.pr.is_some() => {
                 self.notice = Some("in a pull request — p picks another or exits".to_string());
             }
             Action::PickBase => self.open_base_picker()?,
+            Action::PickScope => self.open_scope_picker(),
             Action::PickPr => self.open_pr_picker(),
             Action::Comment => self.request_comment(false),
             Action::CommentGeneral => self.request_comment(true),
