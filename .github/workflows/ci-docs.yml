@@ -1,0 +1,27 @@
+name: CI (docs)
+
+# ci.yml skips docs, website, and demo-asset changes, but the main
+# ruleset still requires its `test (<os>)` checks on every PR. This is
+# the inverse of ci.yml's paths-ignore: report those check names as
+# instant successes so docs-only PRs aren't blocked waiting for a run
+# that will never start. A PR touching both kinds of files triggers
+# both workflows; the ruleset is satisfied per check name, so the real
+# runs still gate the code.
+on:
+  pull_request:
+    paths:
+      - "**.md"
+      - assets/**
+      - site/**
+      - install.sh
+      - .github/workflows/pages.yml
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    name: test (${{ matrix.os }})
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "docs-only change — cargo test does not apply"
