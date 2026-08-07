@@ -65,6 +65,9 @@ impl Forge for GlabCli {
             files,
             threads,
             conversation,
+            // GitLab's diff "viewed" checkbox is web-UI only — no API
+            // reads or writes it, so the review checks stay local.
+            viewed: None,
         })
     }
 
@@ -282,6 +285,7 @@ fn parse_detail(json: &str) -> Result<PrDetail, ForgeError> {
         head_sha: refs.head_sha,
         base_sha: refs.base_sha,
         start_sha: (!refs.start_sha.is_empty()).then_some(refs.start_sha),
+        node_id: String::new(),
         url: mr.web_url,
     })
 }
@@ -574,6 +578,7 @@ mod tests {
             head_sha: "h1".to_string(),
             base_sha: "b1".to_string(),
             start_sha: Some("s1".to_string()),
+            node_id: String::new(),
             url: String::new(),
         };
         // Added line: new_line only.

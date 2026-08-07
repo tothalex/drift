@@ -53,6 +53,16 @@ pub enum AppEvent {
         seq: u64,
         result: Result<RefreshedComments, String>,
     },
+    /// One file's viewed state reached the forge, or didn't — a failure
+    /// puts the optimistic check back the way it was.
+    ViewedSynced {
+        seq: u64,
+        path: PathBuf,
+        /// What was pushed — a failure restores the check to its
+        /// negation, not to the negation of whatever it is by then.
+        viewed: bool,
+        result: Result<(), String>,
+    },
     /// Progress line from a background language install ("fetching …");
     /// shown in the status bar as it happens.
     LangProgress(String),

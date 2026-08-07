@@ -39,6 +39,9 @@ pub struct PrDetail {
     /// GitLab `diff_refs.start_sha`, required by its position API;
     /// `None` on GitHub.
     pub start_sha: Option<String>,
+    /// GitHub GraphQL node id — the handle the viewed-state mutations
+    /// take, which is not the PR number. Empty where the forge has none.
+    pub node_id: String,
     pub url: String,
 }
 
@@ -104,6 +107,12 @@ pub struct PrData {
     pub threads: Vec<CommentThread>,
     /// PR-level conversation comments.
     pub conversation: Vec<Comment>,
+    /// Paths the viewer has already ticked off on the forge, or `None`
+    /// where the forge tracks no such state. `Some(vec![])` means the
+    /// forge tracks it and nothing is ticked — the two must stay
+    /// distinguishable, since one seeds the review checks and the other
+    /// must leave them alone.
+    pub viewed: Option<Vec<PathBuf>>,
 }
 
 /// What a composed comment is aimed at.
