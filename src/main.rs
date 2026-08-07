@@ -28,7 +28,10 @@ fn main() -> Result<()> {
     }
 
     // Fail before touching the terminal so errors print normally.
-    let config = drift::config::load()?;
+    let mut config = drift::config::load()?;
+    // The flag only ever turns the sync off, so it can't fight a config
+    // that already has it off.
+    config.viewed_sync &= !cli.no_viewed_sync;
     let vcs = drift::vcs::detect(&cli.path)?;
     // Base priority: --base flag, then config, then auto-detection.
     let base = cli.base.clone().or_else(|| config.base.clone());

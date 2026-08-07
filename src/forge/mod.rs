@@ -45,6 +45,26 @@ pub trait Forge: Send + Sync {
         number: u64,
         detail: &PrDetail,
     ) -> Result<(Vec<CommentThread>, Vec<model::Comment>), ForgeError>;
+
+    /// Whether the forge tracks a per-file "viewed" tick for the current
+    /// user. False forges keep the review checks purely local: GitLab's
+    /// checkbox exists in its web UI but not in its API.
+    fn tracks_viewed(&self) -> bool {
+        false
+    }
+
+    /// Tick one file off (or on) for the current user. Only called when
+    /// [`Forge::tracks_viewed`] holds.
+    fn set_viewed(
+        &self,
+        _detail: &PrDetail,
+        _path: &Path,
+        _viewed: bool,
+    ) -> Result<(), ForgeError> {
+        Err(ForgeError::Invalid(
+            "this forge has no per-file viewed state".to_string(),
+        ))
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -342,6 +342,7 @@ mod tests {
             head_sha: "nonexistent-head".to_string(),
             base_sha: "nonexistent-base".to_string(),
             start_sha: None,
+            node_id: "PR_node".to_string(),
             url: String::new(),
         }
     }
@@ -384,6 +385,7 @@ mod tests {
                 body: "LGTM overall".to_string(),
                 created_at: "2026-07-02T10:00:00Z".to_string(),
             }],
+            viewed: None,
         }
     }
 

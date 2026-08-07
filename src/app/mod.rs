@@ -14,7 +14,7 @@ pub mod review;
 pub mod tree_nav;
 pub mod view_cache;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -131,6 +131,12 @@ pub struct App {
     pub layout: PaneLayout,
     pub cache: ViewCache,
     review: Review,
+    /// Mirror review checks onto the forge's per-file viewed state.
+    viewed_sync: bool,
+    /// Staleness counter for viewed-state pushes, and the newest push
+    /// per path — a reply only acts when it is still the newest.
+    viewed_seq: u64,
+    viewed_inflight: HashMap<PathBuf, u64>,
     /// The file whose diff is shown — stays put while the cursor is on a
     /// directory row.
     current: Option<usize>,
@@ -228,6 +234,9 @@ impl App {
             layout: PaneLayout::new(),
             cache: ViewCache::new(),
             review: Review::default(),
+            viewed_sync: config.viewed_sync,
+            viewed_seq: 0,
+            viewed_inflight: HashMap::new(),
             current: None,
             focus: Pane::Tree,
             help_open: false,
@@ -532,6 +541,15 @@ impl App {
                 }
                 AppEvent::PrReady { seq, result } => self.on_pr_ready(seq, result),
                 AppEvent::PrPosted { seq, result } => self.on_pr_posted(seq, result),
+                AppEvent::ViewedSynced {
+                    seq,
+                    path,
+                    viewed,
+                    result,
+                } => {
+                    self.on_viewed_synced(seq, path, viewed, result);
+                    Ok(())
+                }
                 AppEvent::LangProgress(line) => {
                     self.notice = Some(line);
                     Ok(())
@@ -1037,6 +1055,9 @@ impl App {
         let mut files = vec![pr::conversation_entry()];
         files.extend(session.data.files.iter().map(|f| f.changed.clone()));
         self.files = files;
+        if let Some(viewed) = session.data.viewed.clone() {
+            self.review.adopt(&self.files, &viewed);
+        }
         self.cache.reset();
         if !same {
             self.nav.rebuild(&self.files);
@@ -1729,10 +1750,74 @@ impl App {
         let Some(index) = self.nav.selected_file() else {
             return Ok(());
         };
-        if self.review.toggle(&self.files[index].path) {
+        let path = self.files[index].path.clone();
+        let checked = self.review.toggle(&path);
+        if !pr::is_conversation(&self.files[index]) {
+            self.sync_viewed(path, checked);
+        }
+        if checked {
             self.move_file(1)?;
         }
         Ok(())
+    }
+
+    /// Push one check to the forge's per-file viewed state, if the forge
+    /// has one and the reviewer hasn't opted out. The local tick already
+    /// happened: `x` stays instant, and a refusal is undone in
+    /// [`Self::on_viewed_synced`] rather than waited for here.
+    ///
+    /// Deliberately outside the single-slot forge request used by
+    /// comments — ticking files off in a burst is the normal rhythm of a
+    /// review, and those must not cancel each other.
+    fn sync_viewed(&mut self, path: PathBuf, viewed: bool) {
+        let Some(session) = &self.pr else {
+            return; // local changes: checks are ours alone
+        };
+        if !self.viewed_sync {
+            return;
+        }
+        let data = Arc::clone(&session.data);
+        let forge = match self.forge() {
+            Ok(forge) if forge.tracks_viewed() => forge,
+            _ => return,
+        };
+        let tx = self.events_tx.clone();
+        self.viewed_seq += 1;
+        let seq = self.viewed_seq;
+        self.viewed_inflight.insert(path.clone(), seq);
+        std::thread::spawn(move || {
+            let result = forge
+                .set_viewed(&data.detail, &path, viewed)
+                .map_err(|err| err.to_string());
+            let _ = tx.send(AppEvent::ViewedSynced {
+                seq,
+                path,
+                viewed,
+                result,
+            });
+        });
+    }
+
+    /// A viewed-state push came back. Only the newest push for a path
+    /// may act on it — a reviewer who ticks, unticks and re-ticks faster
+    /// than the network must not have the first reply undo the last
+    /// tick. A refusal restores what the check was before that push,
+    /// rather than flipping whatever it is now.
+    fn on_viewed_synced(
+        &mut self,
+        seq: u64,
+        path: PathBuf,
+        viewed: bool,
+        result: Result<(), String>,
+    ) {
+        if self.viewed_inflight.get(&path) != Some(&seq) {
+            return;
+        }
+        self.viewed_inflight.remove(&path);
+        if let Err(err) = result {
+            self.review.set(&path, !viewed);
+            self.notice = Some(format!("{}: {err}", path.display()));
+        }
     }
 
     /// `X`: pop the newest check and put the cursor back on that file.
@@ -1740,6 +1825,7 @@ impl App {
         let Some(path) = self.review.pop_last() else {
             return Ok(());
         };
+        self.sync_viewed(path.clone(), false);
         let row = self
             .files
             .iter()

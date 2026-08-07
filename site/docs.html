@@ -241,6 +241,7 @@
         <tr><td>[path]</td><td>Repository to review; defaults to the current directory.</td></tr>
         <tr><td>-b, --base &lt;branch&gt;</td><td>Base branch to compare against. Auto-detected when absent: <code>origin/HEAD</code>, then <code>main</code>, then <code>master</code>.</td></tr>
         <tr><td>--pr &lt;number&gt;</td><td>Open this pull request / merge request immediately (needs an authenticated <code>gh</code> or <code>glab</code>).</td></tr>
+        <tr><td>--no-viewed-sync</td><td>Keep review checks local: don't tick files off as "viewed" on the pull request. GitHub only; same as <code>forge.viewed_sync = false</code>.</td></tr>
         <tr><td>--init-config</td><td>Write the fully documented default config to <code>~/.config/drift/config.toml</code> and exit.</td></tr>
         <tr><td>lang &lt;command&gt;</td><td>Manage <a href="#languages">language plugins</a>: <code>install</code>, <code>build</code>, <code>list</code>, <code>remove</code>.</td></tr>
         <tr><td>update [--check]</td><td>Update drift to the latest release, or just report one with <code>--check</code>. Needs <code>curl</code> and <code>tar</code>.</td></tr>
@@ -284,7 +285,7 @@
         <tr><td>[ / ]</td><td>Widen / narrow the tree-sitter block scope around a change.</td></tr>
         <tr><td>z</td><td>Collapse / expand unchanged lines.</td></tr>
         <tr><td>C</td><td>Fold / unfold comment blocks.</td></tr>
-        <tr><td>x / X</td><td>Check a file off as reviewed / uncheck the last one.</td></tr>
+        <tr><td>x / X</td><td>Check a file off as reviewed / uncheck the last one. In a GitHub pull request this ticks the file as "viewed" there too.</td></tr>
         <tr><td>v</td><td>Visual mode: select lines.</td></tr>
         <tr><td>y</td><td>Copy the line or selection.</td></tr>
         <tr><td>s</td><td>Send the line or selection to an <a href="#ai-agents">AI agent pane</a>.</td></tr>
@@ -369,7 +370,15 @@
         <pre><span class="tbl">[forge]</span>
 <span class="key">kind</span> = <span class="s">"gitlab"</span>          <span class="c"># or "github"</span>
 <span class="c"># gh = "/path/to/gh"     # binary overrides, if not on PATH</span>
-<span class="c"># glab = "/path/to/glab"</span></pre>
+<span class="c"># glab = "/path/to/glab"</span>
+<span class="c"># viewed_sync = true     # x also ticks the file viewed on GitHub</span></pre>
+        <p>In a pull request, checking a file off with <kbd>x</kbd> also
+        ticks it as <em>viewed</em> on GitHub, and the ticks already
+        there come back as checks when you open it. Set
+        <code>viewed_sync = false</code> (or pass
+        <code>--no-viewed-sync</code>) to keep your checks to yourself.
+        GitLab exposes no per-file viewed state, so there the checks are
+        always local.</p>
       </section>
 
       <section id="config-agent">

@@ -206,6 +206,16 @@ conversation in place:
 - `r` refetches the open pull request without losing your place; `p`
   (or clicking the `#N` status segment) returns to the list, where the
   first row leads back to your local changes.
+- Checking a file off with `x` ticks it as **viewed** on GitHub, and the
+  ticks already on the PR come back as checks when you open it — so the
+  progress you make in the terminal is the progress your teammates see,
+  and picking a review back up on another machine keeps your place. The
+  tick is sent in the background; `x` never waits on the network, and a
+  refusal puts the check back and says why. A file GitHub marked
+  *dismissed* — viewed, then changed underneath you — comes back
+  unchecked for a second look. Turn it off with `--no-viewed-sync` or
+  `viewed_sync = false`. GitLab has no such API, so there the checks
+  stay local to your session.
 - When the PR's commits exist locally (after any `git fetch`), diffs get
   full syntax highlighting and block scoping; otherwise drift falls back
   to the plain hunk view — no fetch is ever run for you.
@@ -223,6 +233,7 @@ from the repo's `origin` remote. If your hostname names neither
 kind = "gitlab"          # or "github"
 # gh = "/path/to/gh"     # binary overrides, if not on PATH
 # glab = "/path/to/glab"
+# viewed_sync = true     # x also ticks the file viewed on GitHub
 ```
 
 [`gh`]: https://cli.github.com

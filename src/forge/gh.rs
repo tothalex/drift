@@ -6,7 +6,7 @@
 //! itself. JSON → model mapping lives in pure functions parsed from
 //! fixture strings in tests.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use serde::Deserialize;
@@ -72,6 +72,31 @@ impl GhCli {
         ]))?;
         parse_thread_meta(&json)
     }
+
+    /// Paths the viewer has ticked off. `DISMISSED` — GitHub's "you
+    /// viewed this, then it changed" — counts as unviewed, so a file
+    /// that moved under the reviewer comes back for a second look.
+    fn viewed_paths(&self, number: u64) -> Result<Vec<PathBuf>, ForgeError> {
+        let (owner, name) = self.repo_owner_name()?;
+        // first:100 is unpaginated, as with reviewThreads: past 100
+        // files the overflow simply reads as unviewed.
+        const QUERY: &str = "query($owner:String!,$name:String!,$number:Int!){\
+             repository(owner:$owner,name:$name){pullRequest(number:$number){\
+             files(first:100){nodes{path viewerViewedState}}}}}";
+        let json = self.run(&args(&[
+            "api",
+            "graphql",
+            "-f",
+            &format!("query={QUERY}"),
+            "-f",
+            &format!("owner={owner}"),
+            "-f",
+            &format!("name={name}"),
+            "-F",
+            &format!("number={number}"),
+        ]))?;
+        parse_viewed(&json)
+    }
 }
 
 struct ThreadMeta {
@@ -114,6 +139,7 @@ impl Forge for GhCli {
             files,
             threads,
             conversation,
+            viewed: Some(self.viewed_paths(number)?),
         })
     }
 
@@ -178,6 +204,20 @@ impl Forge for GhCli {
         .map(|_| ())
     }
 
+    fn tracks_viewed(&self) -> bool {
+        true
+    }
+
+    fn set_viewed(&self, detail: &PrDetail, path: &Path, viewed: bool) -> Result<(), ForgeError> {
+        if detail.node_id.is_empty() {
+            return Err(ForgeError::Invalid(
+                "pull request has no node id to tick files against".to_string(),
+            ));
+        }
+        self.run(&viewed_args(&detail.node_id, path, viewed))
+            .map(|_| ())
+    }
+
     fn post_general(&self, number: u64, body: &str) -> Result<(), ForgeError> {
         self.run(&general_args(number, body)).map(|_| ())
     }
@@ -219,6 +259,27 @@ fn reply_args(number: u64, thread_key: &str, body: &str) -> Vec<String> {
 }
 
 /// GitHub addresses comments repo-wide, not per PR.
+/// The viewed-state mutation. `path` is a variable rather than inlined
+/// into the query: paths carry quotes and backslashes that would need
+/// escaping, and `gh -f` passes them through untouched.
+fn viewed_args(node_id: &str, path: &Path, viewed: bool) -> Vec<String> {
+    let mutation = if viewed {
+        "mutation($id:ID!,$path:String!){markFileAsViewed(input:{pullRequestId:$id,path:$path}){clientMutationId}}"
+    } else {
+        "mutation($id:ID!,$path:String!){unmarkFileAsViewed(input:{pullRequestId:$id,path:$path}){clientMutationId}}"
+    };
+    args(&[
+        "api",
+        "graphql",
+        "-f",
+        &format!("query={mutation}"),
+        "-f",
+        &format!("id={node_id}"),
+        "-f",
+        &format!("path={}", path.display()),
+    ])
+}
+
 fn delete_args(comment_id: &str, inline: bool) -> Vec<String> {
     let path = if inline {
         format!("repos/{{owner}}/{{repo}}/pulls/comments/{comment_id}")
@@ -316,6 +377,8 @@ struct ApiPull {
     head: ApiRef,
     base: ApiRef,
     #[serde(default)]
+    node_id: String,
+    #[serde(default)]
     html_url: String,
 }
 
@@ -332,8 +395,59 @@ fn parse_detail(json: &str) -> Result<PrDetail, ForgeError> {
         head_sha: pull.head.sha,
         base_sha: pull.base.sha,
         start_sha: None,
+        node_id: pull.node_id,
         url: pull.html_url,
     })
+}
+
+#[derive(Deserialize)]
+struct GqlViewedFiles {
+    data: GqlViewedData,
+}
+
+#[derive(Deserialize)]
+struct GqlViewedData {
+    repository: GqlViewedRepo,
+}
+
+#[derive(Deserialize)]
+struct GqlViewedRepo {
+    #[serde(rename = "pullRequest")]
+    pull_request: GqlViewedPr,
+}
+
+#[derive(Deserialize)]
+struct GqlViewedPr {
+    files: GqlViewedNodes,
+}
+
+#[derive(Deserialize)]
+struct GqlViewedNodes {
+    #[serde(default)]
+    nodes: Vec<GqlViewedFile>,
+}
+
+#[derive(Deserialize)]
+struct GqlViewedFile {
+    #[serde(default)]
+    path: String,
+    #[serde(default, rename = "viewerViewedState")]
+    state: String,
+}
+
+fn parse_viewed(json: &str) -> Result<Vec<PathBuf>, ForgeError> {
+    let parsed: GqlViewedFiles =
+        serde_json::from_str(json).map_err(|err| ForgeError::Parse("gh", err.to_string()))?;
+    Ok(parsed
+        .data
+        .repository
+        .pull_request
+        .files
+        .nodes
+        .into_iter()
+        .filter(|file| file.state == "VIEWED")
+        .map(|file| PathBuf::from(file.path))
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -483,6 +597,7 @@ mod tests {
     #[test]
     fn detail_parses() {
         let json = r#"{"number":12,"title":"fix parser","body":null,
+            "node_id":"PR_kwDOabc123",
             "user":{"login":"alice"},
             "head":{"ref":"fix/parser","sha":"aaa111"},
             "base":{"ref":"main","sha":"bbb222"},
@@ -492,6 +607,47 @@ mod tests {
         assert_eq!(detail.base_sha, "bbb222");
         assert_eq!(detail.body, "");
         assert!(detail.start_sha.is_none());
+        // The viewed-state mutations key on this, not on the number.
+        assert_eq!(detail.node_id, "PR_kwDOabc123");
+    }
+
+    #[test]
+    fn viewed_args_pick_the_mutation() {
+        let mark = viewed_args("PR_node", Path::new("src/a.rs"), true);
+        assert!(mark.iter().any(|a| a.contains("markFileAsViewed")));
+        assert!(!mark.iter().any(|a| a.contains("unmarkFileAsViewed")));
+        assert_eq!(
+            mark,
+            vec![
+                "api",
+                "graphql",
+                "-f",
+                "query=mutation($id:ID!,$path:String!){markFileAsViewed(input:{pullRequestId:$id,path:$path}){clientMutationId}}",
+                "-f",
+                "id=PR_node",
+                "-f",
+                "path=src/a.rs",
+            ]
+        );
+
+        let unmark = viewed_args("PR_node", Path::new("src/a.rs"), false);
+        assert!(unmark.iter().any(|a| a.contains("unmarkFileAsViewed")));
+    }
+
+    #[test]
+    fn viewed_parses_and_dismissed_reads_as_unviewed() {
+        let json = r#"{"data":{"repository":{"pullRequest":{"files":{"nodes":[
+            {"path":"src/a.rs","viewerViewedState":"VIEWED"},
+            {"path":"src/b.rs","viewerViewedState":"UNVIEWED"},
+            {"path":"src/c.rs","viewerViewedState":"DISMISSED"},
+            {"path":"src/d.rs","viewerViewedState":"VIEWED"}]}}}}}"#;
+
+        let viewed = parse_viewed(json).unwrap();
+
+        assert_eq!(
+            viewed,
+            vec![PathBuf::from("src/a.rs"), PathBuf::from("src/d.rs")]
+        );
     }
 
     #[test]
@@ -631,6 +787,7 @@ mod tests {
             head_sha: "aaa111".to_string(),
             base_sha: "bbb222".to_string(),
             start_sha: None,
+            node_id: "PR_node".to_string(),
             url: String::new(),
         };
         let anchor = Anchor {

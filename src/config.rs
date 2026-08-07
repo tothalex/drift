@@ -63,6 +63,10 @@ struct ForgeSection {
     gh: Option<String>,
     #[serde(default)]
     glab: Option<String>,
+    /// Mirror the review checks (`x`) onto the pull request's per-file
+    /// "viewed" ticks. GitHub only; GitLab exposes no such API.
+    #[serde(default)]
+    viewed_sync: Option<bool>,
 }
 
 impl ForgeSection {
@@ -167,6 +171,8 @@ pub struct Config {
     pub base: Option<String>,
     pub editor: String,
     pub forge: ForgeConfig,
+    /// Mirror review checks onto the forge's per-file viewed state.
+    pub viewed_sync: bool,
     pub agent: AgentConfig,
     pub update: UpdateConfig,
     pub keymap: Keymap,
@@ -215,6 +221,7 @@ fn load_at(path: &Path) -> Result<Config> {
     }
     let theme = Theme::from_all_overrides(&flat, &langs)
         .with_context(|| format!("invalid [theme] in {}", path.display()))?;
+    let viewed_sync = file.forge.viewed_sync.unwrap_or(true);
     let forge = file
         .forge
         .into_config()
@@ -227,6 +234,7 @@ fn load_at(path: &Path) -> Result<Config> {
         base: file.base,
         editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
         forge,
+        viewed_sync,
         agent,
         update: file.update.into_config(),
         keymap,
@@ -294,10 +302,16 @@ pub fn default_toml() -> String {
          # login`. The forge is detected from the origin remote URL; set\n\
          # kind for self-hosted hosts naming neither \"github\" nor\n\
          # \"gitlab\".\n\
+         # In a pull request the x key also ticks the file off as\n\
+         # \"viewed\" on GitHub, and the ticks already there come back\n\
+         # as checks when you open it; set viewed_sync = false (or pass\n\
+         # --no-viewed-sync) to keep the checks to yourself. GitLab has\n\
+         # no such API, so there the checks are always local.\n\
          # [forge]\n\
          # kind = \"github\"          # or \"gitlab\"\n\
          # gh = \"/path/to/gh\"       # binary overrides\n\
-         # glab = \"/path/to/glab\"\n\n\
+         # glab = \"/path/to/glab\"\n\
+         # viewed_sync = true       # mirror x onto GitHub's Viewed\n\n\
          # Send the current line or visual selection to an AI agent pane\n\
          # (the s key): the prompt you type lands in a running claude/\n\
          # codex/… CLI in a sibling pane of the herdr, tmux or cmux\n\
