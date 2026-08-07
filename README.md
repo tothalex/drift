@@ -270,6 +270,11 @@ sees exactly what changed; unchanged code goes plain.
 
 ![sending a selection from drift to Claude Code](assets/agent.gif)
 
+The same flow with drift and the agent living in panes of a [herdr]
+session — there drift also sees each agent's live idle/working state:
+
+![sending a selection from drift to a claude agent pane in herdr](assets/agent-herdr.gif)
+
 This works through [herdr], a terminal workspace manager for AI coding
 agents — or through plain tmux, or [cmux]. In herdr, drift finds every
 agent pane automatically, with its live idle/working state. In tmux and
