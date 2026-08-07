@@ -25,7 +25,9 @@ opt-level = 2
 
 [dependencies]
 anyhow = "1.0.103"
-arboard = "3.6.1"
+# text clipboard only: the default image-data feature drags in
+# image/tiff/zune-jpeg, which drift never uses.
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 cc = "1.2.31"
 clap = { version = "4.6.2", features = ["derive"] }
 libloading = "0.8.9"
