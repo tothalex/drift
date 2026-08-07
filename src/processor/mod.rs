@@ -419,6 +419,57 @@ diff --git a/x.rs b/x.rs
     }
 
     #[test]
+    fn new_file_keeps_every_added_line() {
+        // Regression: the whole file is one top-level change segment, so
+        // it resolves to no block. A `#` marker further down must not
+        // capture it and drop the other 11 lines.
+        let source = "\
+import csv
+
+
+def parse(data):
+    return data
+
+
+# --- reading ---
+
+
+def read_rows(data):
+    return data
+";
+        let patch = "\
+--- /dev/null
++++ b/x.py
+@@ -0,0 +1,12 @@
++import csv
++
++
++def parse(data):
++    return data
++
++
++# --- reading ---
++
++
++def read_rows(data):
++    return data";
+        let diff = unidiff::parse(patch);
+
+        let view = process(
+            Path::new("x.py"),
+            &diff,
+            Some(source),
+            None,
+            ViewOptions::default(),
+        );
+
+        let FileView::Sections { diffstat, .. } = view else {
+            panic!("expected sections");
+        };
+        assert_eq!(diffstat, (12, 0));
+    }
+
+    #[test]
     fn scope_widens_from_if_to_function_and_clamps() {
         let source = "\
 fn outer() {

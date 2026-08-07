@@ -66,6 +66,19 @@ impl<'a> TsResolver<'a> {
         (start, end)
     }
 
+    /// The 1-based lines `changed` narrowed to its first and last
+    /// non-blank line — `None` when every line in it is blank. A removal
+    /// anchors on the new-side line before the gap, which is often blank.
+    fn content_range(&self, changed: (u32, u32)) -> Option<(u32, u32)> {
+        let non_blank = |n: &u32| {
+            let (start, end) = self.line_bytes(*n);
+            !self.source[start..end].trim().is_empty()
+        };
+        let first = (changed.0..=changed.1).find(non_blank)?;
+        let last = (first..=changed.1).rev().find(non_blank)?;
+        Some((first, last))
+    }
+
     /// First comment node on any of the 1-based lines `changed`.
     fn comment_node_in(&self, changed: (u32, u32)) -> Option<Node<'_>> {
         let root = self.tree.root_node();
@@ -167,8 +180,14 @@ impl BlockResolver for TsResolver<'_> {
                 None => break,
             }
         }
+        // Only when it covers every changed line: a wide top-level span
+        // (a new file, an edit across siblings) merely *contains* the
+        // comment, and resolving to it would hide the rest of the change.
         if blocks.is_empty()
+            && let Some((first, last)) = self.content_range(changed)
             && let Some(block) = self.comment_block(changed)
+            && block.range.0 <= first
+            && block.range.1 >= last
         {
             blocks.push(block);
         }
@@ -292,6 +311,44 @@ fn beta() -> u32 {
             assert_eq!(chain[0].range, (5, 9));
             assert_eq!(chain[0].title, "fn beta() -> u32");
         }
+    }
+
+    #[test]
+    fn wide_change_does_not_resolve_to_a_comment_inside_it() {
+        let src = "\
+use std::fmt;
+
+fn alpha() {
+    1;
+}
+
+// a section marker
+
+fn beta() -> u32 {
+    42
+}
+";
+        let r = resolver(src, "x.rs");
+        // Every line changed (a new file): the marker on line 7 encloses
+        // nothing, so the change stays blockless and keeps all its lines.
+        assert!(r.enclosing_blocks((1, 12)).is_empty());
+    }
+
+    #[test]
+    fn comment_change_reaching_into_its_block_still_resolves() {
+        let src = "\
+/// Doc line.
+fn alpha() -> u32 {
+    42
+}
+";
+        let r = resolver(src, "x.rs");
+        // The change spans the comment and the body it documents — the
+        // block covers it, so it survives the coverage check.
+        let chain = r.enclosing_blocks((1, 3));
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].range, (1, 4));
+        assert_eq!(chain[0].title, "fn alpha() -> u32");
     }
 
     #[test]
