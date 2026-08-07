@@ -239,7 +239,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
 /// of the line's chars consumed before it — the renderer's row map
 /// translates mouse positions back to content chars with it. Wrapping
 /// is display-only: cursor, selections and yanks stay on view lines.
-fn wrap_line(line: Line<'static>, width: usize, indent: usize) -> Vec<(Line<'static>, usize)> {
+/// Shared with the peek view, which wraps identically.
+pub(super) fn wrap_line(
+    line: Line<'static>,
+    width: usize,
+    indent: usize,
+) -> Vec<(Line<'static>, usize)> {
     let mut rows = Vec::new();
     if width == 0 {
         rows.push((line, 0));
@@ -462,9 +467,9 @@ fn gutter_parts(theme: &Theme, line: &DiffLine) -> (&'static str, Option<Color>,
 
 /// Split `content` into segments along the syntax spans (foreground),
 /// the emphasis ranges (background on the exact changed bytes), and the
-/// search hit (accented foreground).
+/// search hit (accented foreground). Shared with the peek overlay.
 #[allow(clippy::too_many_arguments)]
-fn render_content(
+pub(super) fn render_content(
     theme: &Theme,
     lang: Option<&HashMap<String, Color>>,
     content: &str,

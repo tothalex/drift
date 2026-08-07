@@ -9,6 +9,7 @@ pub mod blocks;
 pub mod comments;
 pub mod emphasis;
 pub mod highlight;
+pub mod peek;
 pub mod splice;
 pub mod tabs;
 pub mod treesitter;

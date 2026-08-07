@@ -8,6 +8,7 @@
 pub mod code_view;
 pub mod compose;
 pub mod panes;
+pub mod peek;
 pub mod picker;
 pub mod pr;
 pub mod review;
@@ -40,12 +41,13 @@ use crate::keymap::{Action, Keymap};
 use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
 use crate::ui::CODE_GUTTER;
-use crate::vcs::model::{ChangedFile, Comparison, LineKind, Scope};
+use crate::vcs::model::{ChangedFile, Comparison, FileDiff, LineKind, RevisionId, Scope};
 use crate::vcs::{self, Vcs};
 
 use code_view::{CodeView, TextPos};
 use compose::{Compose, ComposeKind};
 use panes::PaneLayout;
+use peek::Peek;
 use picker::pr_label;
 pub use picker::{AgentPicker, BasePicker, Picker, PrPicker, ScopePicker};
 use pr::PrSession;
@@ -146,6 +148,10 @@ pub struct App {
     help_open: bool,
     /// The open picker overlay (base branch or review scope), if any.
     picker: Option<Picker>,
+    /// The open peek (the block under the cursor as it reads now, new
+    /// side only), replacing the code pane while set. Modal: it
+    /// captures all keys.
+    peek: Option<Peek>,
     /// Vim-style count prefix: typed digits repeat the next motion.
     count: Option<usize>,
     /// Search: one independent query per pane (highlights persist until
@@ -241,6 +247,7 @@ impl App {
             focus: Pane::Tree,
             help_open: false,
             picker: None,
+            peek: None,
             count: None,
             search_tree: String::new(),
             search_code: String::new(),
@@ -298,6 +305,11 @@ impl App {
 
     pub fn picker(&self) -> Option<&Picker> {
         self.picker.as_ref()
+    }
+
+    /// The open peek, if any.
+    pub fn peek(&self) -> Option<&Peek> {
+        self.peek.as_ref()
     }
 
     /// The language-install prompt to draw, if one is being offered.
@@ -633,6 +645,10 @@ impl App {
             self.handle_compose_key(key);
             return Ok(());
         }
+        if self.peek.is_some() {
+            self.handle_peek_key(key);
+            return Ok(());
+        }
         // `/` input mode captures keystrokes; the cursor follows matches
         // live, yazi-style. Enter keeps the matches, Esc cancels.
         if self.search_input {
@@ -753,6 +769,7 @@ impl App {
             }
             Action::ScopeWiden => self.adjust_scope(count)?,
             Action::ScopeNarrow => self.adjust_scope(-count)?,
+            Action::Peek => self.open_peek(),
             Action::Search => {
                 self.search_query_mut().clear();
                 self.search_input = true;
@@ -823,6 +840,98 @@ impl App {
             .and_then(|view| view.lineno_at(self.code.cursor))
             .unwrap_or(1);
         self.pending_editor = Some((path, line));
+    }
+
+    /// Peek keys go through the keymap so rebinds carry over: the
+    /// motions move the overlay's cursor (with vim-style counts, like
+    /// the main view), the scope keys walk the chain of enclosing
+    /// blocks, and quit/peek (plus Esc) close the overlay.
+    fn handle_peek_key(&mut self, key: KeyEvent) {
+        let action = self.keymap.action_for(key.code, key.modifiers);
+        if key.code == KeyCode::Esc || matches!(action, Some(Action::Quit) | Some(Action::Peek)) {
+            self.peek = None;
+            self.count = None;
+            return;
+        }
+        if let KeyCode::Char(digit @ '0'..='9') = key.code
+            && !(digit == '0' && self.count.is_none())
+        {
+            let digit = digit as usize - '0' as usize;
+            self.count = Some((self.count.unwrap_or(0) * 10 + digit).min(9999));
+            return;
+        }
+        let explicit_count = self.count.is_some();
+        let count = self.count.take().unwrap_or(1).max(1) as isize;
+        let Some(peek) = &mut self.peek else { return };
+        match action {
+            Some(Action::CursorDown) => peek.move_by(count),
+            Some(Action::CursorUp) => peek.move_by(-count),
+            Some(Action::JumpDown) => peek.move_by(15 * count),
+            Some(Action::JumpUp) => peek.move_by(-15 * count),
+            // `10G`/`10g` jump to file line 10, clamped into the block.
+            Some(Action::JumpTop) | Some(Action::JumpBottom) if explicit_count => {
+                peek.to_line(count as u32);
+            }
+            Some(Action::JumpTop) => peek.to_top(),
+            Some(Action::JumpBottom) => peek.to_bottom(),
+            Some(Action::ScopeWiden) => (0..count).for_each(|_| peek.widen()),
+            Some(Action::ScopeNarrow) => (0..count).for_each(|_| peek.narrow()),
+            _ => {}
+        }
+    }
+
+    /// Open the peek overlay on the block enclosing the cursor's line —
+    /// computed on demand from the new-side source, nothing cached.
+    fn open_peek(&mut self) {
+        let Some(file) = self.current_file().cloned() else {
+            self.notice = Some("no file to peek at".to_string());
+            return;
+        };
+        if pr::is_conversation(&file) {
+            self.notice = Some("the conversation is not a file".to_string());
+            return;
+        }
+        let Some(line) = self
+            .current_view()
+            .and_then(|view| view.lineno_at(self.code.cursor))
+        else {
+            self.notice = Some("no line to peek at".to_string());
+            return;
+        };
+        let Some((diff, source)) = self.peek_sources(&file) else {
+            self.notice = Some("no new-side content to peek at".to_string());
+            return;
+        };
+        match crate::processor::peek::peek(&file.path, &source, &diff, line) {
+            Some(view) => self.peek = Some(Peek::new(view, line)),
+            None => self.notice = Some("no enclosing block here".to_string()),
+        }
+    }
+
+    /// The diff and new-side source the peek resolves against — the
+    /// working tree, or the PR head while a session is open (mirroring
+    /// how the views themselves are computed).
+    fn peek_sources(&self, file: &ChangedFile) -> Option<(FileDiff, String)> {
+        let (mut diff, source) = match &self.pr {
+            Some(session) => {
+                let pr_file = session
+                    .data
+                    .files
+                    .iter()
+                    .find(|f| f.changed.path == file.path)?;
+                let head = RevisionId(session.data.detail.head_sha.clone());
+                (
+                    pr_file.diff.clone(),
+                    self.vcs.file_at_revision(&head, &file.path)?,
+                )
+            }
+            None => (
+                self.vcs.file_diff(&self.cmp, file).ok()?,
+                std::fs::read_to_string(self.vcs.root().join(&file.path)).ok()?,
+            ),
+        };
+        crate::processor::tabs::expand_diff(&mut diff);
+        Some((diff, crate::processor::tabs::expand_tabs_owned(source)))
     }
 
     /// Picker keys are a fixed modal micro-map: j/k/arrows move, Enter
@@ -1516,6 +1625,14 @@ impl App {
     /// selects text in the code view.
     fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
         if self.help_open || self.picker.is_some() || self.compose.is_some() {
+            return Ok(());
+        }
+        if let Some(peek) = &mut self.peek {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => peek.move_by(3),
+                MouseEventKind::ScrollUp => peek.move_by(-3),
+                _ => {}
+            }
             return Ok(());
         }
         let position = Position::new(mouse.column, mouse.row);

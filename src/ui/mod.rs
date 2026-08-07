@@ -3,6 +3,7 @@ mod diff_view;
 mod file_list;
 mod help;
 mod lang_prompt;
+mod peek;
 mod picker;
 mod status_bar;
 
@@ -81,13 +82,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.layout.tree_visible {
         file_list::draw(frame, app, tree_header, tree_content);
     }
-    diff_view::draw(frame, app, code_header, code_content);
+    // An open peek replaces the code pane: the block as it reads now,
+    // new side only. The diff comes back when it closes.
+    if app.peek().is_some() {
+        peek::draw(frame, app, code_header, code_content);
+    } else {
+        diff_view::draw(frame, app, code_header, code_content);
+    }
     status_bar::draw(frame, app, status);
     // The clipped-name tooltip stays under the modal overlays.
     if app.layout.tree_visible
         && !app.help_open()
         && app.picker().is_none()
         && app.compose().is_none()
+        && app.peek().is_none()
     {
         file_list::draw_path_tooltip(frame, app);
     }

@@ -81,6 +81,11 @@ base branch, kept live as you edit:
   if, …) resolved with tree-sitter, not as bare hunks; the scope can be
   widened and narrowed with `[` and `]`. Other files fall back to plain
   hunks.
+- Press `w` to peek the block under the cursor as it reads now: the
+  code pane switches to the new side only — no deletions — with new
+  lines accented so the change stays findable, and the cursor still on
+  the line you pressed it. `[` and `]` walk the enclosing blocks
+  outward and back in; `w` again (or Esc) returns to the diff.
 - Changed lines are marked by gutter accents and word-level emphasis on
   the exact edit.
 - Long lines wrap at the pane edge (vim-style, hanging behind the

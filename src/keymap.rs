@@ -24,6 +24,7 @@ pub enum Action {
     JumpBottom,
     ScopeWiden,
     ScopeNarrow,
+    Peek,
     Search,
     NextMatch,
     PrevMatch,
@@ -66,6 +67,7 @@ pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("jump_bottom", Action::JumpBottom, &["G"]),
     ("scope_widen", Action::ScopeWiden, &["["]),
     ("scope_narrow", Action::ScopeNarrow, &["]"]),
+    ("peek", Action::Peek, &["w"]),
     ("search", Action::Search, &["/"]),
     ("next_match", Action::NextMatch, &["n"]),
     ("prev_match", Action::PrevMatch, &["N"]),
@@ -155,7 +157,9 @@ impl Keymap {
             .map(|b| b.action)
     }
 
-    fn primary_key(&self, action: Action) -> &str {
+    /// Display name of the first key bound to `action` — for the help
+    /// overlay and the key hints modal overlays advertise.
+    pub fn primary_key(&self, action: Action) -> &str {
         self.bindings
             .iter()
             .find(|b| b.action == action)
@@ -218,6 +222,7 @@ const HELP: &[(&[Action], &str)] = &[
         &[Action::ScopeWiden, Action::ScopeNarrow],
         "widen / narrow block scope",
     ),
+    (&[Action::Peek], "peek the block's new version"),
     (
         &[Action::ToggleCollapse],
         "collapse / expand unchanged lines",
