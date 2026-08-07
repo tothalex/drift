@@ -28,7 +28,17 @@ Prebuilt binaries (x86_64/aarch64) land in `~/.local/bin` (override with
 `DRIFT_INSTALL_DIR`). The Linux binaries link against glibc (2.17+,
 so any distro from the last decade) — language plugins are loaded with
 `dlopen`, which a static binary cannot do. On musl-based distros
-(Alpine, etc.), build from source with the distro's Rust toolchain.
+(Alpine, etc.), install with cargo instead (below).
+
+**Cargo**
+
+```sh
+cargo install drift-tui    # installs the `drift` binary
+```
+
+Builds from source on your machine (Rust 1.96+). On musl distros a
+native build links musl dynamically, so language plugins work; with a
+rustup musl toolchain add `RUSTFLAGS="-C target-feature=-crt_static"`.
 
 **Windows (experimental)**
 

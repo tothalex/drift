@@ -1,11 +1,21 @@
 [package]
-name = "drift"
+# crates.io package is drift-tui ("drift" is squatted there); the lib
+# and binary keep the plain name so code and installs see `drift`.
+name = "drift-tui"
 version = "0.21.1"
 edition = "2024"
 rust-version = "1.96"
 description = "Review your working changes like a pull request, in the terminal"
 license = "MIT"
 repository = "https://github.com/tothalex/drift"
+
+[lib]
+name = "drift"
+path = "src/lib.rs"
+
+[[bin]]
+name = "drift"
+path = "src/main.rs"
 
 # Dev builds stay unoptimized for our own code (fast rebuilds), but
 # dependencies — tree-sitter's C grammars, query compilation — get -O2:

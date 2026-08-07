@@ -215,8 +215,14 @@
       <code>DRIFT_INSTALL_DIR</code>. The Linux binaries link against
       glibc (2.17+) — language plugins are loaded with <code>dlopen</code>,
       which a static binary cannot do. On musl-based distros (Alpine,
-      etc.), build from source instead:</p>
+      etc.), install with cargo instead:</p>
       <pre><span class="p">$</span> curl -fsSL https://tothalex.github.io/drift/install.sh | sh</pre>
+      <p><b>Cargo</b> — builds from source on your machine (Rust 1.96+);
+      the package is <code>drift-tui</code>, the binary it installs is
+      <code>drift</code>. On musl distros a native build links musl
+      dynamically, so language plugins work (with a rustup musl
+      toolchain add <code>RUSTFLAGS="-C target-feature=-crt_static"</code>):</p>
+      <pre><span class="p">$</span> cargo install drift-tui</pre>
       <p><b>Windows (experimental)</b> — download
       <code>drift-windows-x86_64.zip</code> from the
       <a href="https://github.com/tothalex/drift/releases/latest">latest release</a>,

@@ -261,7 +261,7 @@ fn checksum_for(checksums: &str, asset: &str) -> Option<String> {
 fn managed_hint(exe: &Path) -> Option<&'static str> {
     let path = exe.to_string_lossy().replace('\\', "/");
     if path.contains("/.cargo/bin/") {
-        Some("this drift was installed with cargo — update with: cargo install drift")
+        Some("this drift was installed with cargo — update with: cargo install drift-tui")
     } else if path.contains("/Cellar/") || path.contains("/linuxbrew/") {
         Some("this drift is managed by homebrew — update with: brew upgrade")
     } else {
