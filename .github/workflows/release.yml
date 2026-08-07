@@ -13,10 +13,13 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
+          # gnu, not musl: language plugins are loaded with dlopen, which
+          # static musl binaries don't support (issue #5). zigbuild pins
+          # glibc 2.17 so the binary still runs on old distros.
+          - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: drift-linux-x86_64
-          - target: aarch64-unknown-linux-musl
+          - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             name: drift-linux-aarch64
           - target: x86_64-apple-darwin
@@ -52,8 +55,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # zig cross-compiles the tree-sitter grammars' C code for musl
-      # targets without a cross-gcc toolchain.
+      # zig cross-compiles both targets against a pinned glibc without
+      # a cross-gcc toolchain.
       - name: Install Zig
         if: runner.os == 'Linux'
         uses: mlugg/setup-zig@v2
@@ -71,7 +74,7 @@ jobs:
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
-        run: cargo zigbuild --release --locked --target ${{ matrix.target }}
+        run: cargo zigbuild --release --locked --target ${{ matrix.target }}.2.17
 
       - name: Build (macOS / Windows)
         if: runner.os != 'Linux'
