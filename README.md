@@ -117,7 +117,8 @@ base branch, kept live as you edit:
   skips what's done. A name clipped by a narrow pane shows its full
   path in a tooltip under the cursor.
 - Vim-style keys (counts, `g`/`G`, visual mode, yank) and full mouse
-  support (wheel per pane, click, drag-to-copy, pane resize).
+  support (wheel per pane, click to place the cursor, drag-to-copy,
+  pane resize).
 - Live reload: the working tree is watched, so edits made outside the
   app — your editor, an AI agent, a `git commit` — appear as they land,
   without losing your cursor or scroll position. Gitignored paths

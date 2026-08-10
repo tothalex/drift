@@ -68,6 +68,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
     let width = content.width as usize;
     let cursor = app.code.cursor.min(total.saturating_sub(1));
     let view_offset = app.code.view_offset;
+    let pending_top = app.code.take_pending_top();
 
     // Per-row styling: visual selection under the cursorline; the
     // cursorline hides while a mouse selection is in progress. Applied
@@ -188,9 +189,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
                 centered -= 1;
                 above += h;
             }
-            // Free-scroll (mouse wheel) offsets the centered position.
-            let mut top = centered
-                .saturating_add_signed(view_offset)
+            // Free-scroll (mouse wheel) offsets the centered position; a
+            // click pins the top row instead, overriding both (the
+            // normalization below turns the pin into a plain offset).
+            let mut top = pending_top
+                .unwrap_or_else(|| centered.saturating_add_signed(view_offset))
                 .min(total.saturating_sub(1));
             let mut rows = Vec::with_capacity(height);
             let mut map = Vec::with_capacity(height);
