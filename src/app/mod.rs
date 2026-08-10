@@ -1621,8 +1621,8 @@ impl App {
     }
 
     /// The mouse wheel scrolls whatever it hovers without moving cursors;
-    /// clicks select/fold in the tree; dragging resizes on the divider or
-    /// selects text in the code view.
+    /// clicks select/fold in the tree and place the cursor in the code
+    /// view; dragging resizes on the divider or selects text.
     fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
         if self.help_open || self.picker.is_some() || self.compose.is_some() {
             return Ok(());
@@ -2576,7 +2576,10 @@ impl App {
         };
         self.code.mouse_sel = None;
         if start == end {
-            return; // a plain click, not a drag
+            // A plain click, not a drag: move the cursor to the clicked
+            // line without scrolling the view.
+            self.code.click_cursor(start.0, self.view_len());
+            return;
         }
         let text = self.selected_text(start, end);
         if text.is_empty() {
