@@ -61,11 +61,14 @@ cargo fmt                   # required before committing
   `HELP` row (tests fail otherwise), and a `handle_key` match arm.
 - Commit messages: short, lowercase, imperative-ish, matching
   `git log --oneline`. **No AI co-author trailers.**
-- Releases: push the version-bump commit and the tag only — the
-  `release.yml` workflow builds binaries, creates the GitHub release,
-  and publishes the `drift-tui` crate to crates.io (via the trusted
-  publisher configured in the crate's settings). Never create releases
-  or publish the crate by hand.
+- Releases: land the version-bump commit on `main` through a PR (the
+  branch ruleset blocks direct pushes), then tag `main`'s tip
+  `vX.Y.Z` and push the tag — the `release.yml` workflow builds
+  binaries, creates the GitHub release, and publishes the `drift-tui`
+  crate to crates.io (via the trusted publisher configured in the
+  crate's settings). Push the tag only after the bump is merged;
+  never create releases or publish the crate by hand. Features bump
+  the minor version, fixes the patch.
 
 ## Documentation sync (important)
 
