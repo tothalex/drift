@@ -1,0 +1,64 @@
+name: Release-plz
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+# Both jobs authenticate with a fine-grained PAT (RELEASE_PLZ_TOKEN,
+# contents + pull-requests read/write) instead of github.token: PRs and
+# tags created with the default token never trigger other workflows, so
+# CI wouldn't run on the release PR and the tag wouldn't fire release.yml.
+jobs:
+  # Keeps a "release vX.Y.Z" PR open with the version bump and
+  # changelog inferred from conventional commits since the last tag;
+  # merging that PR is the release decision.
+  release-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-plz-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Open or update the release PR
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+  # After the release PR merges, main's Cargo.toml version is ahead of
+  # the latest tag; this tags the tip vX.Y.Z and release.yml takes over.
+  # A no-op on every other push to main.
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Tag the release
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}

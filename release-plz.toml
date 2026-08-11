@@ -1,0 +1,9 @@
+# release-plz only maintains the release PR (version bump + changelog)
+# and, once it merges, pushes the vX.Y.Z tag. Everything downstream —
+# binaries, the GitHub release, the crates.io publish — stays in
+# release.yml, triggered by that tag.
+[workspace]
+publish = false
+git_release_enable = false
+# docs/ci/chore-only churn doesn't warrant a release PR.
+release_commits = "^(feat|fix|perf)"
