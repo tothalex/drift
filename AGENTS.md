@@ -59,16 +59,18 @@ cargo fmt                   # required before committing
   is factored into pure functions so it's testable from fixtures.
 - Adding a key action requires: `Action` variant, `KEY_DEFAULTS` row,
   `HELP` row (tests fail otherwise), and a `handle_key` match arm.
-- Commit messages: short, lowercase, imperative-ish, matching
-  `git log --oneline`. **No AI co-author trailers.**
-- Releases: land the version-bump commit on `main` through a PR (the
-  branch ruleset blocks direct pushes), then tag `main`'s tip
-  `vX.Y.Z` and push the tag — the `release.yml` workflow builds
-  binaries, creates the GitHub release, and publishes the `drift-tui`
-  crate to crates.io (via the trusted publisher configured in the
-  crate's settings). Push the tag only after the bump is merged;
-  never create releases or publish the crate by hand. Features bump
-  the minor version, fixes the patch.
+- Commit messages: conventional-commit prefixed (`feat:`, `fix:`,
+  `docs:`, `chore:`, `refactor:`, `test:`), then short, lowercase,
+  imperative-ish — release-plz derives the version bump (`feat` →
+  minor, `fix` → patch, `!` → major) and the changelog from them.
+  **No AI co-author trailers.**
+- Releases: release-plz (`release-plz.yml`) keeps a `release vX.Y.Z`
+  PR open with the version bump and changelog; merging that PR is the
+  release — release-plz then tags `main`'s tip, and the tag triggers
+  `release.yml`, which builds binaries, creates the GitHub release,
+  and publishes the `drift-tui` crate to crates.io (via the trusted
+  publisher configured in the crate's settings). Never bump versions,
+  create tags or releases, or publish the crate by hand.
 
 ## Documentation sync (important)
 
