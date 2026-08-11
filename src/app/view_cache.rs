@@ -11,7 +11,7 @@ use crate::processor;
 use crate::processor::ViewOptions;
 use crate::processor::view::FileView;
 use crate::vcs::Vcs;
-use crate::vcs::model::{ChangedFile, Comparison, FileDiff, LineKind};
+use crate::vcs::model::{ChangedFile, Comparison, FileDiff, LineKind, Scope};
 
 pub struct ViewCache {
     views: HashMap<PathBuf, FileView>,
@@ -100,10 +100,15 @@ pub fn compute(
     // Tabs render zero-width in the terminal; expand them everywhere the
     // processor looks so spans stay aligned with the displayed text.
     processor::tabs::expand_diff(&mut diff);
-    // New-side content; None (deleted/unreadable) → hunk fallback.
-    let source = std::fs::read_to_string(vcs.root().join(&file.path))
-        .ok()
-        .map(processor::tabs::expand_tabs_owned);
+    // New-side content; None (deleted/unreadable) → hunk fallback. Must
+    // match the diff's new side: the picked commit's tree under a commit
+    // scope (the working copy may have diverged), the working copy
+    // otherwise.
+    let source = match &cmp.scope {
+        Scope::Commit(rev) => vcs.file_at_revision(rev, &file.path),
+        _ => std::fs::read_to_string(vcs.root().join(&file.path)).ok(),
+    }
+    .map(processor::tabs::expand_tabs_owned);
     // Ancestor-side content is only needed to highlight removed lines;
     // skip the lookup when the diff has none.
     let old_source = if has_removed_lines(&diff) {
@@ -127,5 +132,95 @@ pub(crate) fn has_removed_lines(diff: &FileDiff) -> bool {
         FileDiff::Text { hunks } => hunks
             .iter()
             .any(|h| h.lines.iter().any(|l| l.kind == LineKind::Removed)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::processor::view::{FileView, ViewLine};
+    use crate::vcs::VcsError;
+    use crate::vcs::model::{DiffLine, FileStatus, Hunk, RevisionId, Scope};
+
+    const COMMIT_SOURCE: &str = "fn main() {\n    let x = 1;\n}\n";
+
+    /// A repo whose working copy has no `x.rs` (it was deleted after the
+    /// picked commit); the commit's own tree still has it.
+    struct CommitOnlyVcs;
+    impl Vcs for CommitOnlyVcs {
+        fn root(&self) -> &Path {
+            Path::new("/nowhere")
+        }
+        fn comparison(&self, _base: Option<&str>) -> Result<Comparison, VcsError> {
+            unimplemented!()
+        }
+        fn changed_files(&self, _cmp: &Comparison) -> Result<Vec<ChangedFile>, VcsError> {
+            unimplemented!()
+        }
+        fn file_diff(&self, _cmp: &Comparison, _file: &ChangedFile) -> Result<FileDiff, VcsError> {
+            let lines = COMMIT_SOURCE
+                .lines()
+                .enumerate()
+                .map(|(i, content)| DiffLine {
+                    kind: LineKind::Added,
+                    old_lineno: None,
+                    new_lineno: Some(i as u32 + 1),
+                    content: content.to_string(),
+                })
+                .collect();
+            Ok(FileDiff::Text {
+                hunks: vec![Hunk {
+                    old_range: (0, 0),
+                    new_range: (1, 3),
+                    header: String::new(),
+                    lines,
+                }],
+            })
+        }
+        fn file_at_ancestor(&self, _cmp: &Comparison, _file: &ChangedFile) -> Option<String> {
+            None
+        }
+        fn file_at_revision(&self, rev: &RevisionId, path: &Path) -> Option<String> {
+            (rev.0 == "abc123" && path == Path::new("x.rs")).then(|| COMMIT_SOURCE.to_string())
+        }
+        fn branches(&self) -> Result<Vec<String>, VcsError> {
+            unimplemented!()
+        }
+        fn commits(
+            &self,
+            _cmp: &Comparison,
+        ) -> Result<Vec<crate::vcs::model::CommitInfo>, VcsError> {
+            unimplemented!()
+        }
+        fn unignored(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+            paths
+        }
+    }
+
+    /// Under a commit scope the highlighting source is the commit's own
+    /// tree, not the working copy — which may have diverged or, as here,
+    /// no longer have the file at all.
+    #[test]
+    fn commit_scope_highlights_from_the_commit_not_the_working_copy() {
+        let cmp = Comparison {
+            base_label: "main".to_string(),
+            ancestor: RevisionId("def456".to_string()),
+            work_label: "feature".to_string(),
+            scope: Scope::Commit(RevisionId("abc123".to_string())),
+        };
+        let file = ChangedFile {
+            status: FileStatus::Added,
+            path: PathBuf::from("x.rs"),
+            old_path: None,
+        };
+        let view = compute(&file, &CommitOnlyVcs, &cmp, ViewOptions::default()).unwrap();
+        let FileView::Sections { sections, .. } = view else {
+            panic!("expected sections");
+        };
+        let has_spans = sections
+            .iter()
+            .flat_map(|s| &s.lines)
+            .any(|line| matches!(line, ViewLine::Diff { spans, .. } if !spans.is_empty()));
+        assert!(has_spans, "commit-scoped view should be highlighted");
     }
 }
