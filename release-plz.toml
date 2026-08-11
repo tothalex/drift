@@ -7,3 +7,6 @@ publish = false
 git_release_enable = false
 # docs/ci/chore-only churn doesn't warrant a release PR.
 release_commits = "^(feat|fix|perf)"
+# drift is an app, not a library: features bump minor even pre-1.0
+# (cargo's 0.x breaking-change reservation doesn't apply).
+features_always_increment_minor = true
