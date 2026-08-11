@@ -63,7 +63,8 @@ cargo fmt                   # required before committing
   `docs:`, `chore:`, `refactor:`, `test:`), then short, lowercase,
   imperative-ish — release-plz derives the version bump (`feat` →
   minor, `fix` → patch, `!` → major) and the changelog from them.
-  **No AI co-author trailers.**
+  **No AI co-author trailers or attribution footers — commits and PR
+  bodies both.**
 - Releases: release-plz (`release-plz.yml`) keeps a `release vX.Y.Z`
   PR open with the version bump and changelog; merging that PR is the
   release — release-plz then tags `main`'s tip, and the tag triggers

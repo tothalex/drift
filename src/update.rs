@@ -52,6 +52,12 @@ pub fn run(check_only: bool) -> Result<()> {
         return Ok(());
     }
     log(&format!("drift {latest} is available"));
+    if let Some(notes) = fetch_changelog(&tag).and_then(|text| changelog_since(&text, current_v)) {
+        println!();
+        for line in notes.lines() {
+            println!("  {line}");
+        }
+    }
     if check_only {
         println!("\n  run `drift update` to install\n");
         return Ok(());
@@ -190,6 +196,23 @@ fn latest_tag() -> Result<String> {
         .with_context(|| format!("no published release found at {latest}"))
 }
 
+/// The repo's changelog as of `tag`, from the raw-file host — the same
+/// no-API pathway as the rest of the updater. Best-effort: offline, or
+/// tags from before the changelog existed, just show nothing.
+fn fetch_changelog(tag: &str) -> Option<String> {
+    let output = Command::new("curl")
+        .args(["-fsSL", "--connect-timeout", "10", "--max-time", "30"])
+        .arg(format!(
+            "https://raw.githubusercontent.com/{REPO}/{tag}/CHANGELOG.md"
+        ))
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 fn curl_to(url: &str, dest: &Path) -> Result<()> {
     let mut curl = Command::new("curl");
     curl.args(["-fsSL", "--retry", "3"])
@@ -226,6 +249,54 @@ fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
     let mut next = || parts.next()?.parse().ok();
     let version = (next()?, next()?, next()?);
     parts.next().is_none().then_some(version)
+}
+
+/// The changelog sections for every version newer than `current`,
+/// rendered for the terminal: headers reduced to "x.y.z — date" (the
+/// compare-link markdown stripped), bodies as written. None when no
+/// section is newer — an old changelog shows nothing rather than lying.
+fn changelog_since(changelog: &str, current: (u64, u64, u64)) -> Option<String> {
+    let mut out = String::new();
+    let mut include = false;
+    for line in changelog.lines() {
+        if let Some(header) = line.strip_prefix("## ") {
+            include = header_version(header).is_some_and(|version| version > current);
+            if include {
+                if !out.is_empty() {
+                    out.push('\n');
+                }
+                out.push_str(&render_header(header));
+                out.push('\n');
+            }
+        } else if include {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    let notes = out.trim_matches('\n');
+    (!notes.is_empty()).then(|| notes.to_string())
+}
+
+/// The version in a changelog section header: "## [x.y.z](url) - date"
+/// or "## x.y.z - date". "[Unreleased]" and friends parse as None.
+fn header_version(header: &str) -> Option<(u64, u64, u64)> {
+    let version = match header.trim().strip_prefix('[') {
+        Some(rest) => rest.split(']').next()?,
+        None => header.split_whitespace().next()?,
+    };
+    parse_version(version)
+}
+
+/// "[x.y.z](url) - date" → "x.y.z — date".
+fn render_header(header: &str) -> String {
+    let version = match header.trim().strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or_default(),
+        None => header.split_whitespace().next().unwrap_or_default(),
+    };
+    match header.rsplit_once(" - ") {
+        Some((_, date)) => format!("{version} — {}", date.trim()),
+        None => version.to_string(),
+    }
 }
 
 /// The tag at the end of a `…/releases/tag/<tag>` URL.
@@ -305,6 +376,59 @@ mod tests {
             tag_from_release_url("https://github.com/releases/tag/"),
             None
         );
+    }
+
+    #[test]
+    fn changelog_shows_only_sections_newer_than_current() {
+        let changelog = "\
+# Changelog
+
+## [Unreleased]
+
+## [0.23.0](https://github.com/tothalex/drift/compare/v0.22.1...v0.23.0) - 2026-08-12
+
+### Added
+- show the changelog in `drift update`
+
+## [0.22.1](https://github.com/tothalex/drift/compare/v0.22.0...v0.22.1) - 2026-08-11
+
+### Fixed
+- watcher CPU on huge ignored trees
+
+## [0.22.0] - 2026-08-10
+
+### Added
+- older things
+";
+        let notes = changelog_since(changelog, (0, 22, 1)).unwrap();
+        assert!(notes.starts_with("0.23.0 — 2026-08-12"));
+        assert!(notes.contains("show the changelog"));
+        assert!(!notes.contains("watcher CPU"));
+        assert!(!notes.contains("Unreleased"));
+        assert!(!notes.contains("]("));
+
+        let all = changelog_since(changelog, (0, 21, 0)).unwrap();
+        assert!(all.contains("0.23.0 — 2026-08-12"));
+        assert!(all.contains("0.22.1 — 2026-08-11"));
+        assert!(all.contains("0.22.0 — 2026-08-10"));
+
+        assert_eq!(changelog_since(changelog, (0, 23, 0)), None);
+        assert_eq!(changelog_since("# Changelog\n", (0, 1, 0)), None);
+    }
+
+    #[test]
+    fn changelog_headers_parse_with_and_without_links() {
+        assert_eq!(
+            header_version("[0.23.0](url) - 2026-08-12"),
+            Some((0, 23, 0))
+        );
+        assert_eq!(header_version("0.23.0 - 2026-08-12"), Some((0, 23, 0)));
+        assert_eq!(header_version("[Unreleased]"), None);
+        assert_eq!(
+            render_header("[0.23.0](url) - 2026-08-12"),
+            "0.23.0 — 2026-08-12"
+        );
+        assert_eq!(render_header("[0.23.0]"), "0.23.0");
     }
 
     #[test]
