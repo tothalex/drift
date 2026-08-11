@@ -2,15 +2,15 @@
 //! background work (terminal input, view prefetching, the filesystem
 //! watcher, status scans) sends events instead of the main loop polling.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{RecvTimeoutError, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use notify::RecursiveMode;
-use notify_debouncer_full::{DebounceEventResult, new_debouncer};
+use notify::{RecursiveMode, Watcher};
 
 use crate::forge::model::{Comment, CommentThread, PrData, PullRequest};
 use crate::processor::view::FileView;
@@ -142,9 +142,20 @@ pub fn spawn_input_thread(tx: Sender<AppEvent>, paused: Arc<AtomicBool>) {
     });
 }
 
+/// How long a change batch coalesces before it is filtered and
+/// delivered — the ceiling on live-reload latency.
+const DEBOUNCE: Duration = Duration::from_millis(300);
+
 /// Watch the working tree and surface debounced, ignore-filtered change
 /// batches. Best-effort: if the watcher can't start, live reload is
 /// silently off and `R` still refreshes manually.
+///
+/// Debouncing is done here, on raw `notify` events, rather than by a
+/// stock debouncer: the stock ones keep a file-ID cache that stat-walks
+/// whole subtrees per event, which melts on repos with huge ignored
+/// trees (a 90 GB `target/`). Per event, this thread pays one set
+/// insert; everything expensive happens once per flush, on the deduped
+/// batch.
 pub fn spawn_watcher_thread(tx: Sender<AppEvent>, root: PathBuf) {
     thread::spawn(move || {
         // The watcher needs its own repository handle (for ignore rules);
@@ -155,48 +166,91 @@ pub fn spawn_watcher_thread(tx: Sender<AppEvent>, root: PathBuf) {
         // FSEvents (and editors writing through symlinks) can report
         // resolved paths; accept either spelling of the root.
         let canonical_root = root.canonicalize().unwrap_or_else(|_| root.clone());
-        let (raw_tx, raw_rx) = std::sync::mpsc::channel::<DebounceEventResult>();
-        let Ok(mut debouncer) = new_debouncer(Duration::from_millis(300), None, raw_tx) else {
+        let (raw_tx, raw_rx) = std::sync::mpsc::channel::<notify::Result<notify::Event>>();
+        let Ok(mut watcher) = notify::recommended_watcher(move |result| {
+            let _ = raw_tx.send(result);
+        }) else {
             return;
         };
-        if debouncer.watch(&root, RecursiveMode::Recursive).is_err() {
+        if watcher.watch(&root, RecursiveMode::Recursive).is_err() {
             return;
         }
-        while let Ok(result) = raw_rx.recv() {
-            let Ok(events) = result else {
-                continue;
+        let mut pending: BTreeSet<PathBuf> = BTreeSet::new();
+        // Set when the first path of a batch arrives and never pushed
+        // back, so a sustained event storm still flushes every DEBOUNCE.
+        let mut deadline: Option<Instant> = None;
+        loop {
+            let received = match deadline {
+                None => match raw_rx.recv() {
+                    Ok(result) => Some(result),
+                    Err(_) => break,
+                },
+                Some(at) => {
+                    match raw_rx.recv_timeout(at.saturating_duration_since(Instant::now())) {
+                        Ok(result) => Some(result),
+                        Err(RecvTimeoutError::Timeout) => None,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
             };
-            let mut meta = false;
-            let mut candidates = Vec::new();
-            for event in &events {
-                for path in &event.paths {
-                    let Some(rel) = path
-                        .strip_prefix(&root)
-                        .or_else(|_| path.strip_prefix(&canonical_root))
-                        .ok()
-                    else {
+            match received {
+                Some(Ok(event)) => {
+                    // Reads aren't changes; everything else (creates,
+                    // writes, removes, renames) marks its paths dirty.
+                    if matches!(event.kind, notify::EventKind::Access(_)) {
                         continue;
-                    };
-                    if rel.starts_with(".git") {
-                        meta |= is_git_meta(rel);
-                    } else if !rel.as_os_str().is_empty() {
-                        candidates.push(rel.to_path_buf());
+                    }
+                    pending.extend(event.paths);
+                    if deadline.is_none() && !pending.is_empty() {
+                        deadline = Some(Instant::now() + DEBOUNCE);
+                    }
+                }
+                Some(Err(_)) => {}
+                None => {
+                    deadline = None;
+                    let (candidates, meta) =
+                        split_batch(std::mem::take(&mut pending), &root, &canonical_root);
+                    // Ignore-filtering here keeps build storms (target/, …)
+                    // from ever reaching the app.
+                    let paths = vcs.unignored(candidates);
+                    if paths.is_empty() && !meta {
+                        continue;
+                    }
+                    if tx.send(AppEvent::FsChanged { paths, meta }).is_err() {
+                        break;
                     }
                 }
             }
-            candidates.sort();
-            candidates.dedup();
-            // Ignore-filtering here keeps build storms (target/, …) from
-            // ever reaching the app.
-            let paths = vcs.unignored(candidates);
-            if paths.is_empty() && !meta {
-                continue;
-            }
-            if tx.send(AppEvent::FsChanged { paths, meta }).is_err() {
-                break;
-            }
         }
     });
+}
+
+/// Split a batch of watcher paths into sorted, deduped repo-relative
+/// change candidates plus whether git metadata moved. `.git` internals
+/// and paths outside the repo never become candidates.
+fn split_batch(
+    batch: BTreeSet<PathBuf>,
+    root: &Path,
+    canonical_root: &Path,
+) -> (Vec<PathBuf>, bool) {
+    let mut meta = false;
+    // Re-collect into a set: both root spellings can report the same
+    // file, and they only collapse after prefix-stripping.
+    let mut candidates = BTreeSet::new();
+    for path in batch {
+        let Ok(rel) = path
+            .strip_prefix(root)
+            .or_else(|_| path.strip_prefix(canonical_root))
+        else {
+            continue;
+        };
+        if rel.starts_with(".git") {
+            meta |= is_git_meta(rel);
+        } else if !rel.as_os_str().is_empty() {
+            candidates.insert(rel.to_path_buf());
+        }
+    }
+    (candidates.into_iter().collect(), meta)
 }
 
 /// The `.git` entries whose change means the status is stale: commits and
@@ -212,6 +266,41 @@ fn is_git_meta(rel: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_batch_relativizes_dedups_and_flags_meta() {
+        let root = Path::new("/repo");
+        let canonical = Path::new("/private/repo");
+        let batch: BTreeSet<PathBuf> = [
+            "/repo/src/main.rs",
+            "/private/repo/src/main.rs",
+            "/repo/README.md",
+            "/repo/.git/HEAD",
+            "/repo/.git/objects/ab/cdef",
+            "/elsewhere/file.rs",
+            "/repo",
+        ]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+        let (candidates, meta) = split_batch(batch, root, canonical);
+        assert_eq!(
+            candidates,
+            vec![PathBuf::from("README.md"), PathBuf::from("src/main.rs")]
+        );
+        assert!(meta);
+    }
+
+    #[test]
+    fn split_batch_ignores_git_noise() {
+        let root = Path::new("/repo");
+        let batch: BTreeSet<PathBuf> = [PathBuf::from("/repo/.git/index.lock")]
+            .into_iter()
+            .collect();
+        let (candidates, meta) = split_batch(batch, root, root);
+        assert!(candidates.is_empty());
+        assert!(!meta);
+    }
 
     #[test]
     fn git_meta_matches_head_index_and_refs_only() {
