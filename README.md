@@ -69,6 +69,9 @@ drift update           # install the latest release in place
 drift update --check   # just report whether one exists
 ```
 
+Both print the changelog for everything between your version and the
+latest, so you see what you're getting before it installs.
+
 drift also checks GitHub for a newer release on launch (at most once a
 day) and mentions it in the status bar; disable with `check = false`
 under `[update]` in the config. The self-update replaces the running
