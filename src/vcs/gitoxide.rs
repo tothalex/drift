@@ -303,8 +303,10 @@ impl Vcs for GixVcs {
                 old_path,
             });
         }
-        if cmp.scope == Scope::Untracked {
-            files.retain(|file| file.status == FileStatus::Untracked);
+        match cmp.scope {
+            Scope::Tracked => files.retain(|file| file.status != FileStatus::Untracked),
+            Scope::Untracked => files.retain(|file| file.status == FileStatus::Untracked),
+            _ => {}
         }
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
