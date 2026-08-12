@@ -29,6 +29,8 @@ pub enum Scope {
     /// Everything different from the ancestor — committed or not.
     #[default]
     All,
+    /// Only changes to files the VCS already tracks.
+    Tracked,
     /// Only files the VCS does not track yet.
     Untracked,
     /// One commit's own changes, against its first parent.

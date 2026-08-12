@@ -14,7 +14,8 @@ pub struct BasePicker {
 }
 
 /// The scope picker overlay that follows a branch choice: review
-/// everything, only untracked files, or one commit.
+/// everything, only tracked changes, only untracked files, or one
+/// commit.
 pub struct ScopePicker {
     pub entries: Vec<(Scope, String)>,
     pub cursor: usize,

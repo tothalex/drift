@@ -405,6 +405,7 @@ impl App {
         }
         let scope = match &self.cmp.scope {
             Scope::All => String::new(),
+            Scope::Tracked => " · tracked".to_string(),
             Scope::Untracked => " · untracked".to_string(),
             Scope::Commit(rev) => format!(" · {}", &rev.0[..rev.0.len().min(7)]),
         };
@@ -1005,6 +1006,7 @@ impl App {
         };
         let mut entries = vec![
             (Scope::All, "all changes".to_string()),
+            (Scope::Tracked, "tracked changes".to_string()),
             (Scope::Untracked, "untracked files".to_string()),
         ];
         entries.extend(commits.into_iter().map(|commit| {

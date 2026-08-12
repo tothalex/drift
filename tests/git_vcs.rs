@@ -308,6 +308,19 @@ fn commits_on_the_base_itself_offer_recent_history() {
 }
 
 #[test]
+fn tracked_scope_excludes_untracked_files() {
+    let tmp = fixture();
+    let vcs = detect(tmp.path()).unwrap();
+    let mut cmp = vcs.comparison(Some("master")).unwrap();
+    cmp.scope = Scope::Tracked;
+
+    let files = vcs.changed_files(&cmp).unwrap();
+    assert!(!files.is_empty());
+    assert!(files.iter().all(|f| f.status != FileStatus::Untracked));
+    assert!(!files.iter().any(|f| f.path == Path::new("untracked.rs")));
+}
+
+#[test]
 fn untracked_scope_lists_only_untracked_files() {
     let tmp = fixture();
     let vcs = detect(tmp.path()).unwrap();
