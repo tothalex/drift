@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0](https://github.com/tothalex/drift/compare/v0.23.1...v0.24.0) - 2026-08-12
+
+### Added
+
+- add tracked-changes review scope ([#19](https://github.com/tothalex/drift/pull/19))
+
 ## [0.23.1](https://github.com/tothalex/drift/compare/v0.23.0...v0.23.1) - 2026-08-11
 
 ### Fixed
