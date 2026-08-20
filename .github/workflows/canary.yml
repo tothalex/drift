@@ -1,0 +1,43 @@
+name: CLI canary
+
+# drift drives gh, glab and herdr — CLIs that ship breaking changes on
+# their own schedules (#21 was herdr removing `agent send`). Weekly,
+# install whatever is latest and assert the exact surface drift invokes
+# still exists (scripts/canary.sh), so a removal turns up here before a
+# user hits it.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install latest gh
+        run: |
+          gh release download -R cli/cli -p '*linux_amd64.deb' -O gh.deb
+          sudo dpkg -i gh.deb
+          gh --version
+
+      - name: Install latest glab
+        run: |
+          url=$(curl -fsSL "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest" \
+            | jq -r '.assets.links[] | select(.name | endswith("linux_amd64.deb")) | .url')
+          curl -fsSLo glab.deb "$url"
+          sudo dpkg -i glab.deb
+          glab --version
+
+      - name: Install latest herdr
+        run: |
+          curl -fsSL https://herdr.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Check drift's invoked surface
+        run: bash scripts/canary.sh
