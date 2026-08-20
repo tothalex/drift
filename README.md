@@ -86,6 +86,7 @@ drift              # review the current repo
 drift --base dev   # compare against a different base
 drift ~/some/repo  # review another repository
 drift --pr 123     # open pull request #123 right away
+drift doctor       # check the CLIs drift drives: versions, auth
 ```
 
 ## The diff view
@@ -315,6 +316,13 @@ away. The `[agent]` config section can pin a target for good:
 drift never talks to a model itself — the prompt lands in the agent you
 already have open, with its context, session, and subscription. Other
 multiplexers (WezTerm, kitty) can plug into the same seam later.
+
+drift drives these sessions through their own CLIs. herdr must be
+**0.7.5 or newer** (older releases predate the pane commands drift
+sends through); gh, glab, and tmux need no particular version. When a
+send or PR call fails oddly, `drift doctor` says which external CLI is
+missing, too old, or unauthenticated — its output is the first thing
+to paste into a bug report.
 
 [herdr]: https://herdr.dev
 [cmux]: https://cmux.com

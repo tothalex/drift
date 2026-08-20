@@ -246,7 +246,8 @@
       <pre><span class="p">$</span> drift              <span class="c"># review the current repo</span>
 <span class="p">$</span> drift --base dev   <span class="c"># compare against a different base</span>
 <span class="p">$</span> drift ~/some/repo  <span class="c"># review another repository</span>
-<span class="p">$</span> drift --pr 123     <span class="c"># open pull request #123 right away</span></pre>
+<span class="p">$</span> drift --pr 123     <span class="c"># open pull request #123 right away</span>
+<span class="p">$</span> drift doctor       <span class="c"># check the CLIs drift drives: versions, auth</span></pre>
       <table>
         <tr><th>FLAG</th><th>MEANING</th></tr>
         <tr><td>[path]</td><td>Repository to review; defaults to the current directory.</td></tr>
@@ -256,6 +257,7 @@
         <tr><td>--init-config</td><td>Write the fully documented default config to <code>~/.config/drift/config.toml</code> and exit.</td></tr>
         <tr><td>lang &lt;command&gt;</td><td>Manage <a href="#languages">language plugins</a>: <code>install</code>, <code>build</code>, <code>list</code>, <code>remove</code>.</td></tr>
         <tr><td>update [--check]</td><td>Update drift to the latest release, or just report one with <code>--check</code>. Needs <code>curl</code> and <code>tar</code>.</td></tr>
+        <tr><td>doctor</td><td>Check the external CLIs drift drives (<code>gh</code>, <code>glab</code>, <code>herdr</code>, <code>tmux</code>, <code>cmux</code>): versions, required minimums, auth, and what the current directory resolves to. Paste the output into bug reports.</td></tr>
         <tr><td>-V, --version</td><td>Print the version.</td></tr>
       </table>
       <p>The comparison point is <code>git merge-base &lt;base&gt; HEAD</code>,
@@ -543,6 +545,10 @@
         its pane goes away. Pin one for good with
         <a href="#config-agent">agent.target</a>.</li>
       </ul>
+      <p class="dim">drift drives these sessions through their own CLIs;
+      herdr must be 0.7.5 or newer (older releases predate the pane
+      commands drift sends through). <code>drift doctor</code> checks
+      every external CLI — version, required minimum, auth.</p>
     </section>
 
     <section id="build">

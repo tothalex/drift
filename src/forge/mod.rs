@@ -76,7 +76,8 @@ pub enum ForgeError {
     #[error("unexpected {0} output: {1}")]
     Parse(&'static str, String),
     /// A request that can't be made (unanchorable comment, vanished
-    /// thread) — not a parse failure; the message stands alone.
+    /// thread, a CLI too old or too new for this drift) — not a parse
+    /// failure; the message stands alone.
     #[error("{0}")]
     Invalid(String),
     #[error("origin remote '{0}' is not a recognized forge; set [forge] kind in the config")]
@@ -116,6 +117,15 @@ pub fn detect(root: &Path, config: &ForgeConfig) -> Result<Box<dyn Forge>, Forge
             root.to_path_buf(),
             config.glab.clone().unwrap_or_else(|| "glab".to_string()),
         )),
+    })
+}
+
+/// The forge [`detect`] would build here, by name, for `drift doctor`.
+pub fn detect_name(root: &Path, config: &ForgeConfig) -> Result<&'static str, ForgeError> {
+    let host = origin_host(root)?;
+    Ok(match detect_kind(&host, config.kind.as_deref())? {
+        ForgeKind::GitHub => "github (gh)",
+        ForgeKind::GitLab => "gitlab (glab)",
     })
 }
 
@@ -193,6 +203,15 @@ pub(crate) fn run_cli(
             .find(|line| !line.is_empty())
             .unwrap_or("failed")
             .to_string();
+        // A rejected command shape (removed subcommand, unknown flag)
+        // is a version mismatch, not an API failure — name the
+        // installed version and which side is behind. The explanation
+        // already names the CLI, so it stands alone.
+        if crate::cliver::usage_error(output.status.code(), &stderr)
+            && let Some(explain) = crate::cliver::explain_rejection(program)
+        {
+            return Err(ForgeError::Invalid(explain));
+        }
         return Err(ForgeError::CliFailed { cli, stderr: line });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())

@@ -65,6 +65,10 @@ pub enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Check the external CLIs drift drives (gh, glab, herdr, tmux,
+    /// cmux): versions, required minimums, auth, and what this
+    /// directory resolves to. Paste the output into bug reports.
+    Doctor,
 }
 
 #[derive(Subcommand, Debug)]
