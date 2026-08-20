@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0](https://github.com/tothalex/drift/compare/v0.24.0...v0.25.0) - 2026-08-20
+
+### Added
+
+- diagnose external CLI version mismatches, add drift doctor ([#23](https://github.com/tothalex/drift/pull/23))
+
+### Fixed
+
+- send prompts through herdr pane send-text ([#22](https://github.com/tothalex/drift/pull/22))
+
+### Other
+
+- weekly canary against the latest gh/glab/herdr ([#24](https://github.com/tothalex/drift/pull/24))
+
 ## [0.24.0](https://github.com/tothalex/drift/compare/v0.23.1...v0.24.0) - 2026-08-12
 
 ### Added
