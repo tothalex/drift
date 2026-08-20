@@ -55,9 +55,12 @@ impl Bridge for Herdr {
     }
 
     fn send(&self, target_id: &str, text: &str, submit: bool) -> Result<()> {
-        // `agent send` writes the text literally into the agent's input
-        // (multi-line stays multi-line); enter is a separate key event.
-        run_cli("herdr", &["agent", "send", target_id, text])?;
+        // `pane send-text` writes the text literally into the pane's
+        // input (multi-line stays multi-line, nothing submitted); enter
+        // is a separate key event. herdr 0.7.5 removed `agent send`, so
+        // the send path uses only these pane primitives — the target id
+        // from `agent list` is the agent's pane id.
+        run_cli("herdr", &["pane", "send-text", target_id, text])?;
         if submit {
             run_cli("herdr", &["pane", "send-keys", target_id, "enter"])?;
         }
