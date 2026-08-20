@@ -15,6 +15,10 @@ fn main() -> Result<()> {
         return drift::update::run(*check);
     }
 
+    if let Some(Command::Doctor) = &cli.command {
+        return drift::doctor::run();
+    }
+
     if cli.init_config {
         let path = drift::config::write_default()?;
         println!("wrote {}", path.display());

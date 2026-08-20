@@ -161,6 +161,12 @@ pub fn detect(config: &AgentConfig) -> Option<Box<dyn Bridge>> {
     }
 }
 
+/// The cmux CLI the cmux backend would run, for `drift doctor` — the
+/// bundled path inside a cmux surface, the bare name elsewhere.
+pub fn cmux_cli_path() -> String {
+    cmux::cli_path()
+}
+
 /// The session drift is a pane of, from the process that owns it.
 ///
 /// An environment marker outlives the pane it names: a terminal opened
@@ -335,6 +341,14 @@ pub(crate) fn run_cli(program: &str, args: &[&str]) -> Result<String> {
             .map(str::trim)
             .find(|line| !line.is_empty())
             .unwrap_or("failed");
+        // A rejected command shape (removed subcommand, usage text) is
+        // a version mismatch, not a runtime failure — say which side is
+        // behind instead of echoing the tool's usage text.
+        if crate::cliver::usage_error(output.status.code(), &stderr)
+            && let Some(explain) = crate::cliver::explain_rejection(program)
+        {
+            bail!("{explain}");
+        }
         bail!("{program}: {line}");
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())

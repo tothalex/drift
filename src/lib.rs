@@ -1,7 +1,9 @@
 pub mod app;
 pub mod cli;
+pub mod cliver;
 pub mod config;
 pub mod connect;
+pub mod doctor;
 pub mod events;
 pub mod forge;
 pub mod keymap;

@@ -38,7 +38,7 @@ pub(super) fn make() -> Box<dyn Bridge> {
 
 /// cmux only puts its CLI on `PATH` when the user symlinks it, but every
 /// surface carries the bundled path; outside one, hope for the symlink.
-fn cli_path() -> String {
+pub(super) fn cli_path() -> String {
     std::env::var("CMUX_BUNDLED_CLI_PATH")
         .ok()
         .filter(|path| !path.is_empty())
