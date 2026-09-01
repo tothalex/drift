@@ -106,6 +106,7 @@ pub fn compute(
     // otherwise.
     let source = match &cmp.scope {
         Scope::Commit(rev) => vcs.file_at_revision(rev, &file.path),
+        Scope::Committed => vcs.file_at_head(&file.path),
         _ => std::fs::read_to_string(vcs.root().join(&file.path)).ok(),
     }
     .map(processor::tabs::expand_tabs_owned);

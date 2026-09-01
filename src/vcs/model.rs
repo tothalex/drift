@@ -29,10 +29,12 @@ pub enum Scope {
     /// Everything different from the ancestor — committed or not.
     #[default]
     All,
-    /// Only changes to files the VCS already tracks.
-    Tracked,
-    /// Only files the VCS does not track yet.
-    Untracked,
+    /// Only what is committed: HEAD against the ancestor, the working
+    /// copy left out.
+    Committed,
+    /// Everything not committed yet: the working copy against HEAD,
+    /// tracked and untracked alike — what `git status` reports.
+    Uncommitted,
     /// One commit's own changes, against its first parent.
     Commit(RevisionId),
 }

@@ -131,10 +131,11 @@ base branch, kept live as you edit:
   (neovim by default, configurable — see below); edits show up in the
   diff the moment you save.
 - Review scopes: press `b` (or click the branch name in the status bar)
-  to switch the base branch, then narrow the review to one commit, to
-  tracked changes only, or to untracked files only — or keep everything
-  at once. `B` skips the branch step and picks the scope on the current
-  base directly.
+  to switch the base branch, then narrow the review to committed work
+  only (HEAD against the base), to uncommitted changes only (the working
+  copy against HEAD — what `git status` reports), or to one commit — or
+  keep everything at once. `B` skips the branch step and picks the scope
+  on the current base directly.
 - All views are precomputed on background threads — navigation stays
   instant regardless of changeset size.
 
