@@ -457,6 +457,7 @@
         <tr><th>FILE</th><th>MEANING</th></tr>
         <tr><td>language.toml</td><td>The manifest: name, file extensions, grammar repo pinned to a commit, and the block kinds.</td></tr>
         <tr><td>highlights.scm</td><td>The tree-sitter highlight query: drift's curated stack, or the grammar repo's bundled query — yours to edit either way.</td></tr>
+        <tr><td>injections.scm</td><td>Optional: embedded-language regions, tree-sitter style. html ships one, so <code>&lt;style&gt;</code> and <code>&lt;script&gt;</code> bodies highlight with the css / javascript grammars when those are installed too.</td></tr>
       </table>
       <pre><span class="c"># ~/.config/drift/languages/zig/language.toml</span>
 <span class="key">name</span> = <span class="s">"zig"</span>

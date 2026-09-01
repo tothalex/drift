@@ -186,6 +186,9 @@ either. A plugin lives in `~/.config/drift/languages/<name>/`:
   stack: the grammar's bundled queries *plus* hand-tuned supplements
   that close the gaps against editor-grade highlighting. Other
   languages get the grammar repo's bundled query.
+- `injections.scm` (optional) — embedded-language regions, tree-sitter
+  style: html ships one, so `<style>` and `<script>` bodies highlight
+  with the css / javascript grammars when those are installed too.
 
 Compiled grammars are cached in `~/.cache/drift/grammars/`, and
 `[theme.<name>]` sections theme any installed language.
