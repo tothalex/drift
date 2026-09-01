@@ -2,7 +2,7 @@
 # crates.io package is drift-tui ("drift" is squatted there); the lib
 # and binary keep the plain name so code and installs see `drift`.
 name = "drift-tui"
-version = "0.25.0"
+version = "0.26.0"
 edition = "2024"
 rust-version = "1.96"
 description = "Review your working changes like a pull request, in the terminal"
