@@ -15,6 +15,8 @@ pub struct Theme {
     pub removed: Color,
     /// Renamed/copied files in the tree.
     pub renamed: Color,
+    /// Directory names in the tree.
+    pub dir: Color,
     /// Word-level emphasis backgrounds on changed byte ranges.
     pub emph_added_bg: Color,
     pub emph_removed_bg: Color,
@@ -62,6 +64,7 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     ("added", "114"),
     ("removed", "168"),
     ("renamed", "110"),
+    ("dir", "110"),
     ("emph_added_bg", "22"),
     ("emph_removed_bg", "52"),
     ("cursor_bg", "236"),
@@ -200,6 +203,7 @@ impl Theme {
             added: resolve("added")?,
             removed: resolve("removed")?,
             renamed: resolve("renamed")?,
+            dir: resolve("dir")?,
             emph_added_bg: resolve("emph_added_bg")?,
             emph_removed_bg: resolve("emph_removed_bg")?,
             cursor_bg: resolve("cursor_bg")?,

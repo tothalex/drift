@@ -127,6 +127,8 @@ pub struct App {
     pub cmp: Comparison,
     pub keymap: Keymap,
     pub theme: Theme,
+    /// Nerd Font file icons in the tree (`icons = true` / `--icons`).
+    pub icons: bool,
     pub files: Vec<ChangedFile>,
     pub nav: TreeNav,
     pub code: CodeView,
@@ -234,6 +236,7 @@ impl App {
             cmp,
             keymap: config.keymap,
             theme: config.theme,
+            icons: config.icons,
             files: Vec::new(),
             nav: TreeNav::new(&[]),
             code: CodeView::new(),
