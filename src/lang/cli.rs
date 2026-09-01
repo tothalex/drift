@@ -160,8 +160,27 @@ fn install(
         Some(text) => Some(text.clone()),
         None => std::fs::read_to_string(plugin_dir.join("highlights.scm")).ok(),
     };
+    // Injections come only from the plugin's own file or drift's curated
+    // one — never copied from the grammar repo, whose file may follow
+    // other editors' conventions.
+    let injections_to_write = match plugin_dir.join("injections.scm").exists() {
+        true => None,
+        false => curated_entry
+            .and_then(|entry| entry.injections)
+            .map(str::to_string),
+    };
+    let injections = match &injections_to_write {
+        Some(text) => Some(text.clone()),
+        None => std::fs::read_to_string(plugin_dir.join("injections.scm")).ok(),
+    };
 
-    build_one(dirs, &manifest, query.as_deref(), log)?;
+    build_one(
+        dirs,
+        &manifest,
+        query.as_deref(),
+        injections.as_deref(),
+        log,
+    )?;
 
     // Everything proved out — now the plugin may exist.
     if let Some(text) = manifest_to_write {
@@ -169,6 +188,9 @@ fn install(
     }
     if let Some(text) = query_to_write {
         write_plugin_file(&plugin_dir, "highlights.scm", &text, log)?;
+    }
+    if let Some(text) = injections_to_write {
+        write_plugin_file(&plugin_dir, "injections.scm", &text, log)?;
     }
     log(&format!(
         "installed {name} ({})",
@@ -203,7 +225,14 @@ fn build(dirs: &Dirs, language: Option<&str>, log: &dyn Fn(&str)) -> Result<()> 
             fetch(repo, manifest.rev.as_deref(), &dirs.checkout(&name), log)?;
         }
         let query = std::fs::read_to_string(dirs.plugin(&name).join("highlights.scm")).ok();
-        build_one(dirs, &manifest, query.as_deref(), log)?;
+        let injections = std::fs::read_to_string(dirs.plugin(&name).join("injections.scm")).ok();
+        build_one(
+            dirs,
+            &manifest,
+            query.as_deref(),
+            injections.as_deref(),
+            log,
+        )?;
         log(&format!("built {name}"));
     }
     Ok(())
@@ -264,6 +293,7 @@ fn build_one(
     dirs: &Dirs,
     manifest: &Manifest,
     query: Option<&str>,
+    injections: Option<&str>,
     log: &dyn Fn(&str),
 ) -> Result<()> {
     log(&format!("compiling {}…", manifest.name));
@@ -286,6 +316,10 @@ fn build_one(
     if let Some(query) = query {
         tree_sitter::Query::new(&language, query)
             .with_context(|| format!("{}'s highlights.scm does not compile", manifest.name))?;
+    }
+    if let Some(injections) = injections {
+        tree_sitter::Query::new(&language, injections)
+            .with_context(|| format!("{}'s injections.scm does not compile", manifest.name))?;
     }
     std::fs::rename(&staging, &dylib)?;
     Ok(())

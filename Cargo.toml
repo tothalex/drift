@@ -54,7 +54,11 @@ tempfile = "3.27.0"
 # unit-test registry statically links the versions the curated
 # manifests pin, so the suite runs without git or a C compiler while
 # exercising the exact queries `drift lang install` ships.
+tree-sitter-css = "0.25.0"
 tree-sitter-go = "0.25.0"
+# The html crate is v0.23.2; the manifest pins that tag plus CI-only
+# commits — the grammar sources and queries are identical.
+tree-sitter-html = "0.23.2"
 tree-sitter-javascript = "0.25.0"
 tree-sitter-python = "0.25.0"
 tree-sitter-rust = "0.24.2"

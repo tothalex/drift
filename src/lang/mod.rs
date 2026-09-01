@@ -35,6 +35,9 @@ pub(crate) struct LangSpec {
     block_kinds: &'static [&'static str],
     /// Highlight query sources, concatenated when compiled.
     highlight_queries: &'static [&'static str],
+    /// Injection query sources: embedded-language regions (`<style>` in
+    /// html) highlighted with their own grammar, when installed.
+    injection_queries: &'static [&'static str],
 }
 
 impl LangSpec {
@@ -48,6 +51,10 @@ impl LangSpec {
 
     pub(crate) fn highlight_query_parts(&self) -> &'static [&'static str] {
         self.highlight_queries
+    }
+
+    pub(crate) fn injection_query_parts(&self) -> &'static [&'static str] {
+        self.injection_queries
     }
 }
 
@@ -111,6 +118,12 @@ pub(crate) fn spec_for(path: &Path) -> Option<&'static LangSpec> {
             .find(|spec| spec.extensions.contains(&ext))
             .copied()
     })
+}
+
+/// Registry lookup by language name — how an injection's
+/// `#set! injection.language "css"` resolves to a grammar.
+pub(crate) fn spec_named(name: &str) -> Option<&'static LangSpec> {
+    with_registry(|specs| specs.iter().find(|spec| spec.name == name).copied())
 }
 
 /// Language identifier for a path, for per-language theming.
@@ -179,30 +192,52 @@ fn test_specs() -> &'static [&'static LangSpec] {
     use std::sync::OnceLock;
     static SPECS: OnceLock<Vec<&'static LangSpec>> = OnceLock::new();
     SPECS.get_or_init(|| {
-        let crates: &[(&str, LanguageFn)] = &[
-            ("rust", tree_sitter_rust::LANGUAGE),
-            ("python", tree_sitter_python::LANGUAGE),
-            ("javascript", tree_sitter_javascript::LANGUAGE),
-            ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
-            ("tsx", tree_sitter_typescript::LANGUAGE_TSX),
-            ("go", tree_sitter_go::LANGUAGE),
+        // For languages without a curated highlights.scm the crate's
+        // bundled query stands in — the same file an install copies
+        // from the grammar checkout.
+        let crates: &[(&str, LanguageFn, Option<&str>)] = &[
+            ("rust", tree_sitter_rust::LANGUAGE, None),
+            ("python", tree_sitter_python::LANGUAGE, None),
+            ("javascript", tree_sitter_javascript::LANGUAGE, None),
+            (
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+                None,
+            ),
+            ("tsx", tree_sitter_typescript::LANGUAGE_TSX, None),
+            ("go", tree_sitter_go::LANGUAGE, None),
+            (
+                "html",
+                tree_sitter_html::LANGUAGE,
+                Some(tree_sitter_html::HIGHLIGHTS_QUERY),
+            ),
+            (
+                "css",
+                tree_sitter_css::LANGUAGE,
+                Some(tree_sitter_css::HIGHLIGHTS_QUERY),
+            ),
         ];
         crates
             .iter()
-            .map(|&(name, grammar)| {
+            .map(|&(name, grammar, bundled)| {
                 let entry = curated::find(name)
                     .unwrap_or_else(|| panic!("{name} missing from the curated registry"));
                 let manifest = manifest::parse(entry.manifest).unwrap();
                 assert_eq!(manifest.name, name);
                 let highlights = entry
                     .highlights
-                    .unwrap_or_else(|| panic!("{name} ships no curated highlights.scm"));
+                    .or(bundled)
+                    .unwrap_or_else(|| panic!("{name} has no highlight query"));
                 &*Box::leak(Box::new(LangSpec {
                     name: entry.name,
                     extensions: loader::leak_all(manifest.extensions),
                     grammar,
                     block_kinds: loader::leak_all(manifest.block_kinds),
                     highlight_queries: Box::leak(Box::new([highlights])),
+                    injection_queries: match entry.injections {
+                        Some(query) => Box::leak(Box::new([query])),
+                        None => &[],
+                    },
                 }))
             })
             .collect()
