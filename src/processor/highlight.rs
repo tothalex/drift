@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Query, QueryCursor, Tree};
+use tree_sitter::{Parser, Query, QueryCursor, Tree};
 
 use crate::lang::LangSpec;
 
@@ -179,6 +179,16 @@ pub(crate) fn highlight_tree(
     source: &str,
     byte_ranges: Option<&[(usize, usize)]>,
 ) -> Option<FileHighlights> {
+    highlight_tree_at(spec, tree, source, byte_ranges, 0)
+}
+
+fn highlight_tree_at(
+    spec: &'static LangSpec,
+    tree: &Tree,
+    source: &str,
+    byte_ranges: Option<&[(usize, usize)]>,
+    depth: usize,
+) -> Option<FileHighlights> {
     let compiled = query_for(spec)?;
     let ranges = match byte_ranges {
         // Merge overlapping/adjacent ranges only: measurement showed that
@@ -192,7 +202,7 @@ pub(crate) fn highlight_tree(
     // captures are nested (or identical ranges from multiple patterns).
     let mut collected: Vec<(usize, usize, TokenKind)> = Vec::new();
     let mut cursor = QueryCursor::new();
-    for (start, end) in ranges {
+    for &(start, end) in &ranges {
         cursor.set_byte_range(start..end.min(source.len()));
         let mut matches = cursor.matches(&compiled.query, tree.root_node(), source.as_bytes());
         while let Some(m) = matches.next() {
@@ -283,7 +293,140 @@ pub(crate) fn highlight_tree(
     for (start, end, token) in flat {
         push_split_by_line(&mut lines, &line_starts, source, start, end, token);
     }
+    // Embedded-language regions (`<style>` in html) highlight with their
+    // own grammar. Depth-capped: an injected document's own injections
+    // resolve once, never further.
+    if depth < 2 {
+        inject(spec, tree, source, &ranges, &mut lines, depth);
+    }
     Some(FileHighlights { lines })
+}
+
+/// A compiled injection query: the `@injection.content` capture plus the
+/// language each pattern names via `#set! injection.language "…"`.
+struct CompiledInjections {
+    query: Query,
+    content_capture: u32,
+    languages: Vec<Option<String>>,
+}
+
+fn injections_for(spec: &'static LangSpec) -> Option<Arc<CompiledInjections>> {
+    static CACHE: OnceLock<Mutex<HashMap<usize, Option<Arc<CompiledInjections>>>>> =
+        OnceLock::new();
+    let key = std::ptr::from_ref(spec) as usize;
+    let mut cache = CACHE.get_or_init(Default::default).lock().ok()?;
+    cache
+        .entry(key)
+        .or_insert_with(|| {
+            let parts = spec.injection_query_parts();
+            if parts.is_empty() {
+                return None;
+            }
+            let query = Query::new(&spec.language(), &parts.join("\n")).ok()?;
+            let content_capture = query.capture_index_for_name("injection.content")?;
+            let languages = (0..query.pattern_count())
+                .map(|i| {
+                    query
+                        .property_settings(i)
+                        .iter()
+                        .find(|prop| &*prop.key == "injection.language")
+                        .and_then(|prop| prop.value.as_deref().map(str::to_string))
+                })
+                .collect();
+            Some(Arc::new(CompiledInjections {
+                query,
+                content_capture,
+                languages,
+            }))
+        })
+        .clone()
+}
+
+/// Run the injection query over the displayed ranges, parse each injected
+/// region with its own grammar (offsets stay file-absolute thanks to
+/// `set_included_ranges`), and merge the resulting spans into `lines`.
+/// A named language that isn't installed simply leaves its region plain.
+fn inject(
+    spec: &'static LangSpec,
+    tree: &Tree,
+    source: &str,
+    ranges: &[(usize, usize)],
+    lines: &mut [Vec<HighlightSpan>],
+    depth: usize,
+) {
+    let Some(compiled) = injections_for(spec) else {
+        return;
+    };
+    // Collect regions first — a region straddling two displayed ranges
+    // must still parse exactly once.
+    let mut regions: Vec<(&'static LangSpec, tree_sitter::Range)> = Vec::new();
+    let mut cursor = QueryCursor::new();
+    for &(start, end) in ranges {
+        cursor.set_byte_range(start..end.min(source.len()));
+        let mut matches = cursor.matches(&compiled.query, tree.root_node(), source.as_bytes());
+        while let Some(m) = matches.next() {
+            let Some(Some(language)) = compiled.languages.get(m.pattern_index) else {
+                continue;
+            };
+            let Some(inner_spec) = crate::lang::spec_named(language) else {
+                continue;
+            };
+            for capture in m.captures {
+                let range = capture.node.range();
+                if capture.index != compiled.content_capture
+                    || range.start_byte >= range.end_byte
+                    || regions
+                        .iter()
+                        .any(|(_, r)| r.start_byte == range.start_byte)
+                {
+                    continue;
+                }
+                regions.push((inner_spec, range));
+            }
+        }
+    }
+
+    for (inner_spec, region) in regions {
+        let clipped: Vec<(usize, usize)> = ranges
+            .iter()
+            .filter_map(|&(start, end)| {
+                let start = start.max(region.start_byte);
+                let end = end.min(region.end_byte);
+                (start < end).then_some((start, end))
+            })
+            .collect();
+        if clipped.is_empty() {
+            continue;
+        }
+        let mut parser = Parser::new();
+        if parser.set_language(&inner_spec.language()).is_err()
+            || parser.set_included_ranges(&[region]).is_err()
+        {
+            continue;
+        }
+        let Some(inner_tree) = parser.parse(source, None) else {
+            continue;
+        };
+        let Some(inner) =
+            highlight_tree_at(inner_spec, &inner_tree, source, Some(&clipped), depth + 1)
+        else {
+            continue;
+        };
+        for (line, inner_spans) in lines.iter_mut().zip(inner.lines) {
+            if inner_spans.is_empty() {
+                continue;
+            }
+            // The injected grammar owns its region: where spans collide
+            // (the host query capturing into raw text), the inner wins.
+            line.retain(|outer| {
+                !inner_spans
+                    .iter()
+                    .any(|inner| inner.start < outer.end && outer.start < inner.end)
+            });
+            line.extend(inner_spans);
+            line.sort_by_key(|span| span.start);
+        }
+    }
 }
 
 /// Convenience: parse and highlight a whole file (no tree at hand).
@@ -552,6 +695,44 @@ mod tests {
     #[test]
     fn unknown_language_is_none() {
         assert!(highlight(Path::new("notes.txt"), "plain").is_none());
+    }
+
+    #[test]
+    fn html_style_and_script_bodies_highlight_via_injection() {
+        let source = "<html>\n<style>\n.card { color: red; }\n</style>\n<script>\nconst n = 42;\n</script>\n</html>\n";
+        let hl = highlight(Path::new("x.html"), source).expect("html highlights");
+        let token_of = |lineno: u32, needle: &str| {
+            let line = source.lines().nth(lineno as usize - 1).unwrap();
+            let at = line.find(needle).unwrap();
+            hl.spans_for(lineno)
+                .iter()
+                .find(|s| s.start <= at && at < s.end)
+                .map(|s| s.token)
+        };
+        // The host document still highlights its own tags…
+        assert_eq!(token_of(1, "html"), Some(TokenKind::Function));
+        // …the <style> body takes the css grammar…
+        assert_eq!(token_of(3, "color"), Some(TokenKind::Property));
+        // …and the <script> body the javascript grammar.
+        assert_eq!(token_of(6, "const"), Some(TokenKind::Keyword));
+        assert_eq!(token_of(6, "42"), Some(TokenKind::Number));
+        // Injected spans obey the invariant every consumer relies on.
+        for lineno in 1..=8 {
+            for pair in hl.spans_for(lineno).windows(2) {
+                assert!(pair[0].end <= pair[1].start, "overlap on line {lineno}");
+            }
+        }
+    }
+
+    #[test]
+    fn injection_respects_displayed_ranges() {
+        let source = "<style>\n.a { color: red; }\n</style>\n<script>\nconst n = 1;\n</script>\n";
+        let resolver = treesitter::TsResolver::new(Path::new("x.html"), source).unwrap();
+        // Only the <style> element's lines are displayed.
+        let hl = highlight_tree(resolver.spec(), resolver.tree(), source, Some(&[(0, 27)]))
+            .expect("highlights");
+        assert!(!hl.spans_for(2).is_empty(), "css line inside the range");
+        assert!(hl.spans_for(5).is_empty(), "js line outside the range");
     }
 
     #[test]

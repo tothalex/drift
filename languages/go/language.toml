@@ -6,7 +6,7 @@ extensions = ["go"]
 
 [grammar]
 repo = "https://github.com/tree-sitter/tree-sitter-go"
-rev = "6048bfc6e5238eaf062c2221bd934489c39fbb61"
+rev = "1547678a9da59885853f5f5cc8a99cc203fa2e2c"
 block_kinds = [
     "function_declaration",
     "method_declaration",

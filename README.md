@@ -131,10 +131,11 @@ base branch, kept live as you edit:
   (neovim by default, configurable — see below); edits show up in the
   diff the moment you save.
 - Review scopes: press `b` (or click the branch name in the status bar)
-  to switch the base branch, then narrow the review to one commit, to
-  tracked changes only, or to untracked files only — or keep everything
-  at once. `B` skips the branch step and picks the scope on the current
-  base directly.
+  to switch the base branch, then narrow the review to committed work
+  only (HEAD against the base), to uncommitted changes only (the working
+  copy against HEAD — what `git status` reports), or to one commit — or
+  keep everything at once. `B` skips the branch step and picks the scope
+  on the current base directly.
 - All views are precomputed on background threads — navigation stays
   instant regardless of changeset size.
 
@@ -186,6 +187,9 @@ either. A plugin lives in `~/.config/drift/languages/<name>/`:
   stack: the grammar's bundled queries *plus* hand-tuned supplements
   that close the gaps against editor-grade highlighting. Other
   languages get the grammar repo's bundled query.
+- `injections.scm` (optional) — embedded-language regions, tree-sitter
+  style: html ships one, so `<style>` and `<script>` bodies highlight
+  with the css / javascript grammars when those are installed too.
 
 Compiled grammars are cached in `~/.cache/drift/grammars/`, and
 `[theme.<name>]` sections theme any installed language.
@@ -344,7 +348,10 @@ an action replaces all of its default keys. Colors take ANSI names,
 and a `[theme.<lang>]` section (naming any installed or curated
 language — rust, typescript, go, …) overrides any syntax color for
 that language only. A top-level `base = "…"` sets the default
-comparison branch.
+comparison branch. With a [Nerd Font](https://www.nerdfonts.com)
+terminal, `icons = true` (or `--icons` for one session) adds
+per-language file icons and folder glyphs to the tree — opt-in,
+because drift can't detect the terminal's font.
 
 Colors layer in three steps: a base colorscheme, then `[theme]` /
 `[theme.<lang>]` overrides on top. The built-in colorscheme is

@@ -36,6 +36,8 @@ fn main() -> Result<()> {
     // The flag only ever turns the sync off, so it can't fight a config
     // that already has it off.
     config.viewed_sync &= !cli.no_viewed_sync;
+    // The flag only ever turns icons on — the config keeps them for good.
+    config.icons |= cli.icons;
     let vcs = drift::vcs::detect(&cli.path)?;
     // Base priority: --base flag, then config, then auto-detection.
     let base = cli.base.clone().or_else(|| config.base.clone());

@@ -8,7 +8,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{App, Pane};
 use crate::theme::Theme;
 use crate::tree::NodeKind;
-use crate::ui::{header_style, search_range};
+use crate::ui::{header_style, icons, search_range};
 use crate::vcs::model::FileStatus;
 
 pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
@@ -49,13 +49,37 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                         format!("{indent}{} ", if *expanded { '▾' } else { '▸' }),
                         Style::default().fg(theme.muted),
                     )];
-                    spans.extend(label(Style::default()));
+                    if app.icons {
+                        spans.push(Span::styled(
+                            format!(
+                                "{} ",
+                                if *expanded {
+                                    icons::DIR_OPEN
+                                } else {
+                                    icons::DIR_CLOSED
+                                }
+                            ),
+                            Style::default().fg(theme.dir),
+                        ));
+                    }
+                    spans.extend(label(
+                        Style::default().fg(theme.dir).add_modifier(Modifier::BOLD),
+                    ));
+                    // ls -F style trailing slash: the folder cue that
+                    // survives themes without a distinct dir color.
+                    spans.push(Span::styled("/", Style::default().fg(theme.muted)));
                     Line::from(spans)
                 }
                 NodeKind::File { index, .. } if app.is_checked(*index) => {
                     // Reviewed: the whole row recedes behind a checkmark.
                     let dim = Style::default().fg(theme.muted);
                     let mut spans = vec![Span::styled(format!("{indent}✓ "), dim)];
+                    if app.icons {
+                        spans.push(Span::styled(
+                            format!("{} ", icons::file(&node.label).0),
+                            dim,
+                        ));
+                    }
                     spans.extend(label(dim));
                     Line::from(spans)
                 }
@@ -64,6 +88,13 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                         format!("{indent}{} ", status.letter()),
                         Style::default().fg(status_color(theme, *status)),
                     )];
+                    if app.icons {
+                        let (glyph, color) = icons::file(&node.label);
+                        spans.push(Span::styled(
+                            format!("{glyph} "),
+                            Style::default().fg(color),
+                        ));
+                    }
                     spans.extend(label(Style::default()));
                     Line::from(spans)
                 }
@@ -106,8 +137,12 @@ pub fn draw_path_tooltip(frame: &mut Frame, app: &App) {
     } else {
         (node.label.clone(), node.path.clone())
     };
-    // Rows render as indent + a two-cell marker + the label.
-    let row_width = node.depth * 2 + 2 + label.as_str().width();
+    // Rows render as indent + a two-cell marker + the label, plus a
+    // trailing slash on directories and a two-cell icon when enabled
+    // (the conversation entry never gets one).
+    let slash = usize::from(matches!(node.kind, crate::tree::NodeKind::Dir { .. }));
+    let icon = usize::from(app.icons && !conversation) * 2;
+    let row_width = node.depth * 2 + 2 + icon + label.as_str().width() + slash;
     if row_width <= area.width as usize {
         return; // the name fits — stay quiet
     }

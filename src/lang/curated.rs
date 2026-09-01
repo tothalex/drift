@@ -16,25 +16,40 @@ pub(super) struct Curated {
     /// queries plus hand-tuned supplements). `None` = installs copy
     /// the grammar repo's bundled query instead.
     pub(super) highlights: Option<&'static str>,
+    /// drift's injection query: embedded-language regions (`<style>`
+    /// in html) highlighted with their own grammar.
+    pub(super) injections: Option<&'static str>,
+}
+
+macro_rules! curated_file {
+    ($name:literal, $file:literal) => {
+        include_str!(concat!("../../languages/", $name, "/", $file))
+    };
 }
 
 macro_rules! curated {
     ($name:literal) => {
         Curated {
             name: $name,
-            manifest: include_str!(concat!("../../languages/", $name, "/language.toml")),
+            manifest: curated_file!($name, "language.toml"),
             highlights: None,
+            injections: None,
         }
     };
     ($name:literal, highlights) => {
         Curated {
             name: $name,
-            manifest: include_str!(concat!("../../languages/", $name, "/language.toml")),
-            highlights: Some(include_str!(concat!(
-                "../../languages/",
-                $name,
-                "/highlights.scm"
-            ))),
+            manifest: curated_file!($name, "language.toml"),
+            highlights: Some(curated_file!($name, "highlights.scm")),
+            injections: None,
+        }
+    };
+    ($name:literal, injections) => {
+        Curated {
+            name: $name,
+            manifest: curated_file!($name, "language.toml"),
+            highlights: None,
+            injections: Some(curated_file!($name, "injections.scm")),
         }
     };
 }
@@ -49,7 +64,7 @@ pub(super) const CURATED: &[Curated] = &[
     curated!("css"),
     curated!("dockerfile"),
     curated!("go", highlights),
-    curated!("html"),
+    curated!("html", injections),
     curated!("java"),
     curated!("javascript", highlights),
     curated!("json"),
@@ -129,7 +144,31 @@ mod tests {
                 "{}: highlights.scm on disk and in the table disagree",
                 entry.name
             );
+            let on_disk_injections = dir.join(entry.name).join("injections.scm").is_file();
+            assert_eq!(
+                on_disk_injections,
+                entry.injections.is_some(),
+                "{}: injections.scm on disk and in the table disagree",
+                entry.name
+            );
         }
+    }
+
+    /// The curated injection queries must compile against the grammar
+    /// versions their manifests pin, and reference only capture names
+    /// the injection pass reads.
+    #[test]
+    fn curated_injection_queries_compile_against_their_grammars() {
+        let html = find("html").unwrap().injections.unwrap();
+        let query = tree_sitter::Query::new(
+            &tree_sitter::Language::new(tree_sitter_html::LANGUAGE),
+            html,
+        )
+        .expect("html injections compile");
+        assert!(
+            query.capture_index_for_name("injection.content").is_some(),
+            "injection query must capture @injection.content"
+        );
     }
 
     /// The curated query stacks must compile against the grammar

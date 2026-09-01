@@ -60,12 +60,18 @@ pub(super) fn load_one(dir: &Path, cache_dir: &Path) -> Result<LangSpec> {
     let lang_fn = load_language(&dylib, &manifest.symbol)?;
     check_abi(lang_fn, &manifest.name)?;
 
-    let highlights = match std::fs::read_to_string(dir.join("highlights.scm")) {
-        Ok(query) => Some(query),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None, // blocks-only support
-        Err(err) => return Err(err).context("cannot read highlights.scm"),
-    };
-    Ok(spec_from(manifest, lang_fn, highlights))
+    let highlights = read_query(dir, "highlights.scm")?; // absent = blocks-only support
+    let injections = read_query(dir, "injections.scm")?;
+    Ok(spec_from(manifest, lang_fn, highlights, injections))
+}
+
+/// An optional query file: absent is fine, unreadable is an error.
+fn read_query(dir: &Path, file: &str) -> Result<Option<String>> {
+    match std::fs::read_to_string(dir.join(file)) {
+        Ok(query) => Ok(Some(query)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("cannot read {file}")),
+    }
 }
 
 /// dlopen `dylib` and resolve `symbol` as a tree-sitter language function.
@@ -107,18 +113,25 @@ pub(super) fn check_abi(lang_fn: LanguageFn, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn spec_from(manifest: Manifest, lang_fn: LanguageFn, highlights: Option<String>) -> LangSpec {
+fn spec_from(
+    manifest: Manifest,
+    lang_fn: LanguageFn,
+    highlights: Option<String>,
+    injections: Option<String>,
+) -> LangSpec {
     // Plugin specs live for the whole process once registered, so
     // leaking their strings lets lookups hand out `&'static` references.
+    let leak_query = |query: Option<String>| match query {
+        Some(query) => leak_all(vec![query]),
+        None => &[][..],
+    };
     LangSpec {
         name: leak(manifest.name),
         extensions: leak_all(manifest.extensions),
         grammar: lang_fn,
         block_kinds: leak_all(manifest.block_kinds),
-        highlight_queries: match highlights {
-            Some(query) => leak_all(vec![query]),
-            None => &[],
-        },
+        highlight_queries: leak_query(highlights),
+        injection_queries: leak_query(injections),
     }
 }
 

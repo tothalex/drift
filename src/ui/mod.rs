@@ -2,6 +2,7 @@ mod compose;
 mod diff_view;
 mod file_list;
 mod help;
+mod icons;
 mod lang_prompt;
 mod peek;
 mod picker;

@@ -127,6 +127,8 @@ pub struct App {
     pub cmp: Comparison,
     pub keymap: Keymap,
     pub theme: Theme,
+    /// Nerd Font file icons in the tree (`icons = true` / `--icons`).
+    pub icons: bool,
     pub files: Vec<ChangedFile>,
     pub nav: TreeNav,
     pub code: CodeView,
@@ -234,6 +236,7 @@ impl App {
             cmp,
             keymap: config.keymap,
             theme: config.theme,
+            icons: config.icons,
             files: Vec::new(),
             nav: TreeNav::new(&[]),
             code: CodeView::new(),
@@ -405,8 +408,8 @@ impl App {
         }
         let scope = match &self.cmp.scope {
             Scope::All => String::new(),
-            Scope::Tracked => " · tracked".to_string(),
-            Scope::Untracked => " · untracked".to_string(),
+            Scope::Committed => " · committed".to_string(),
+            Scope::Uncommitted => " · uncommitted".to_string(),
             Scope::Commit(rev) => format!(" · {}", &rev.0[..rev.0.len().min(7)]),
         };
         format!(
@@ -1006,8 +1009,8 @@ impl App {
         };
         let mut entries = vec![
             (Scope::All, "all changes".to_string()),
-            (Scope::Tracked, "tracked changes".to_string()),
-            (Scope::Untracked, "untracked files".to_string()),
+            (Scope::Committed, "committed changes".to_string()),
+            (Scope::Uncommitted, "uncommitted changes".to_string()),
         ];
         entries.extend(commits.into_iter().map(|commit| {
             let label = format!("{} {}", commit.short_id, commit.summary);

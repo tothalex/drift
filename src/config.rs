@@ -33,6 +33,10 @@ struct ConfigFile {
     /// Editor command for the open-in-editor action.
     #[serde(default)]
     editor: Option<String>,
+    /// Nerd Font file icons in the tree. Opt-in: a terminal never
+    /// reports its font, so a missing patched font can't be detected.
+    #[serde(default)]
+    icons: Option<bool>,
     /// Pull-request integration; see [`ForgeSection`].
     #[serde(default)]
     forge: ForgeSection,
@@ -170,6 +174,8 @@ fn split_theme(
 pub struct Config {
     pub base: Option<String>,
     pub editor: String,
+    /// Nerd Font file icons in the tree.
+    pub icons: bool,
     pub forge: ForgeConfig,
     /// Mirror review checks onto the forge's per-file viewed state.
     pub viewed_sync: bool,
@@ -233,6 +239,7 @@ fn load_at(path: &Path) -> Result<Config> {
     Ok(Config {
         base: file.base,
         editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
+        icons: file.icons.unwrap_or(false),
         forge,
         viewed_sync,
         agent,
@@ -297,6 +304,10 @@ pub fn default_toml() -> String {
          #   editor = \"code -g {file}:{line}\"   (Windows: \"code.cmd\")\n\
          #   editor = \"subl {file}:{line}\"\n\
          editor = \"nvim +{line}\"\n\n\
+         # Nerd Font file icons in the tree. Opt-in: needs a patched\n\
+         # font (nerdfonts.com) in the terminal, which drift cannot\n\
+         # detect. `drift --icons` turns it on for one session.\n\
+         # icons = false\n\n\
          # Pull-request view (the p key) talks to GitHub/GitLab through\n\
          # the official gh/glab CLIs — install one and run its `auth\n\
          # login`. The forge is detected from the origin remote URL; set\n\

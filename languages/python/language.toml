@@ -6,7 +6,7 @@ extensions = ["py"]
 
 [grammar]
 repo = "https://github.com/tree-sitter/tree-sitter-python"
-rev = "d326e4cad262cf681656e130960e49dfc04c03ea"
+rev = "293fdc02038ee2bf0e2e206711b69c90ac0d413f"
 block_kinds = [
     "function_definition",
     "class_definition",

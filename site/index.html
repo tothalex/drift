@@ -32,6 +32,7 @@
     --added: #87d787;         /* 114 */
     --removed: #d75f87;       /* 168 */
     --thread: #87afd7;        /* 110 */
+    --dir: #87afd7;           /* 110 — tree directory names */
     --emph-added-bg: #005f00;   /* 22 */
     --emph-removed-bg: #5f0000; /* 52 */
     --cursor-bg: #303030;     /* 236 */
@@ -201,6 +202,7 @@
   /* Status letters: M is darkgray, untracked ? is green — like drift. */
   .tree .m { color: var(--muted); } .tree .a { color: var(--added); }
   .tree .arrow { color: var(--muted); }
+  .tree .dir { color: var(--dir); font-weight: 600; }
   /* Reviewed files recede entirely behind a muted checkmark. */
   .badge { color: var(--muted); }
   .sb {
@@ -393,12 +395,12 @@
         <div class="hdr">src/cart.ts  <span class="plus">+1</span> <span class="minus">−1</span></div>
         <div class="cols">
           <div class="tree">
-            <div class="trow"><span class="arrow">▾</span> src</div>
+            <div class="trow"><span class="arrow">▾</span> <span class="dir">src</span><span class="arrow">/</span></div>
             <div class="trow on">  <span class="m">M</span> cart.ts</div>
             <div class="trow">  <span class="m">M</span> checkout.ts</div>
             <div class="trow">  <span class="a">?</span> receipt.ts</div>
             <div class="trow">  <span class="badge">✓</span> <span style="color:var(--muted)">api.ts</span></div>
-            <div class="trow"><span class="arrow">▸</span> tests</div>
+            <div class="trow"><span class="arrow">▸</span> <span class="dir">tests</span><span class="arrow">/</span></div>
           </div>
           <div class="code">
             <div class="row"><span class="g">8</span><span>  <span class="fn">total</span><span class="br">()</span><span class="pu">:</span> <span class="ty">number</span> <span class="br">{</span></span></div>

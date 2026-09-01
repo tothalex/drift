@@ -43,6 +43,11 @@ pub struct Cli {
     #[arg(long)]
     pub no_viewed_sync: bool,
 
+    /// Show Nerd Font file icons in the tree for this session (same as
+    /// icons = true in the config; requires a Nerd Font terminal).
+    #[arg(long)]
+    pub icons: bool,
+
     /// Write the default config to ~/.config/drift/config.toml and exit.
     #[arg(long)]
     pub init_config: bool,

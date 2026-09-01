@@ -55,6 +55,12 @@ pub trait Vcs {
         None
     }
 
+    /// The file's content at HEAD — the committed scope's new side.
+    /// Best-effort, like [`Self::file_at_revision`].
+    fn file_at_head(&self, _path: &Path) -> Option<String> {
+        None
+    }
+
     /// Branches usable as a comparison base, most recently active first.
     fn branches(&self) -> Result<Vec<String>, VcsError>;
 

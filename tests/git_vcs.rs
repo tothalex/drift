@@ -308,29 +308,86 @@ fn commits_on_the_base_itself_offer_recent_history() {
 }
 
 #[test]
-fn tracked_scope_excludes_untracked_files() {
+fn committed_scope_shows_only_committed_work() {
     let tmp = fixture();
-    let vcs = detect(tmp.path()).unwrap();
+    let dir = tmp.path();
+    // An uncommitted edit on top of lib.rs's committed change must not
+    // leak into the committed view — its new side ends at HEAD.
+    write(
+        dir,
+        "lib.rs",
+        "fn main() { println!(\"hi\"); }\nfn extra() {}\n",
+    );
+    let vcs = detect(dir).unwrap();
     let mut cmp = vcs.comparison(Some("master")).unwrap();
-    cmp.scope = Scope::Tracked;
+    cmp.scope = Scope::Committed;
 
+    // Only the feature branch's commit: the edit and the rename. The
+    // uncommitted notes.txt edit and the untracked file are absent.
     let files = vcs.changed_files(&cmp).unwrap();
-    assert!(!files.is_empty());
-    assert!(files.iter().all(|f| f.status != FileStatus::Untracked));
-    assert!(!files.iter().any(|f| f.path == Path::new("untracked.rs")));
+    let names: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
+    assert_eq!(names, vec![Path::new("lib.rs"), Path::new("newname.txt")]);
+    assert_eq!(files[0].status, FileStatus::Modified);
+    assert_eq!(files[1].status, FileStatus::Renamed);
+
+    let FileDiff::Text { hunks } = vcs.file_diff(&cmp, &files[0]).unwrap() else {
+        panic!("text diff expected");
+    };
+    let added: Vec<_> = hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .filter(|l| l.kind == LineKind::Added)
+        .map(|l| l.content.as_str())
+        .collect();
+    assert_eq!(added, vec!["fn main() { println!(\"hi\"); }"]);
 }
 
 #[test]
-fn untracked_scope_lists_only_untracked_files() {
+fn uncommitted_scope_matches_git_status() {
     let tmp = fixture();
-    let vcs = detect(tmp.path()).unwrap();
+    let dir = tmp.path();
+    // An uncommitted edit on top of lib.rs's committed change: the old
+    // side must be HEAD's content, not the branch ancestor's.
+    write(
+        dir,
+        "lib.rs",
+        "fn main() { println!(\"hi\"); }\nfn extra() {}\n",
+    );
+    let vcs = detect(dir).unwrap();
     let mut cmp = vcs.comparison(Some("master")).unwrap();
-    cmp.scope = Scope::Untracked;
+    cmp.scope = Scope::Uncommitted;
 
+    // Exactly what `git status` reports: the two uncommitted edits and
+    // the untracked file — no committed work, no committed rename.
     let files = vcs.changed_files(&cmp).unwrap();
-    assert_eq!(files.len(), 1);
-    assert_eq!(files[0].path, Path::new("untracked.rs"));
-    assert_eq!(files[0].status, FileStatus::Untracked);
+    let names: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
+    assert_eq!(
+        names,
+        vec![
+            Path::new("lib.rs"),
+            Path::new("notes.txt"),
+            Path::new("untracked.rs")
+        ]
+    );
+    assert_eq!(files[0].status, FileStatus::Modified);
+    assert_eq!(files[2].status, FileStatus::Untracked);
+
+    // lib.rs diffs against HEAD: only the uncommitted line is a change,
+    // the committed println edit reads as context.
+    let FileDiff::Text { hunks } = vcs.file_diff(&cmp, &files[0]).unwrap() else {
+        panic!("text diff expected");
+    };
+    let added: Vec<_> = hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .filter(|l| l.kind == LineKind::Added)
+        .map(|l| l.content.as_str())
+        .collect();
+    assert_eq!(added, vec!["fn extra() {}"]);
+    assert_eq!(
+        vcs.file_at_ancestor(&cmp, &files[0]).as_deref(),
+        Some("fn main() { println!(\"hi\"); }\n")
+    );
 }
 
 #[test]

@@ -305,7 +305,7 @@
         <tr><td>s</td><td>Send the line or selection to an <a href="#ai-agents">AI agent pane</a>.</td></tr>
         <tr><td>c</td><td>Copy the file path.</td></tr>
         <tr><td>e</td><td>Open the file in your editor at the cursor's line.</td></tr>
-        <tr><td>b</td><td>Choose the base branch, then the review scope (everything, tracked only, untracked only, one commit).</td></tr>
+        <tr><td>b</td><td>Choose the base branch, then the review scope (everything, committed only, uncommitted only, one commit).</td></tr>
         <tr><td>B</td><td>Pick the review scope on the current base directly — e.g. jump straight to a commit.</td></tr>
         <tr><td>r</td><td>Refresh.</td></tr>
         <tr><td>q</td><td>Quit (Esc only cancels — it never quits).</td></tr>
@@ -334,6 +334,7 @@
         <tr><td>base = "main"</td><td>Default comparison branch; <code>--base</code> overrides, auto-detected if unset.</td></tr>
         <tr><td>colorscheme = "onedark"</td><td>Base palette: a built-in name or a file in <code>themes/</code> next to the config.</td></tr>
         <tr><td>editor = "nvim +{line}"</td><td>Editor command for <kbd>e</kbd>; <code>{file}</code> and <code>{line}</code> are substituted, and the path is appended when <code>{file}</code> is absent. E.g. <code>"code -g {file}:{line}"</code>.</td></tr>
+        <tr><td>icons = false</td><td>Nerd Font file icons in the tree. Opt-in — needs a <a href="https://www.nerdfonts.com">patched font</a> in the terminal, which drift can't detect; <code>--icons</code> turns it on for one session.</td></tr>
       </table>
 
       <section id="config-keys">
@@ -456,6 +457,7 @@
         <tr><th>FILE</th><th>MEANING</th></tr>
         <tr><td>language.toml</td><td>The manifest: name, file extensions, grammar repo pinned to a commit, and the block kinds.</td></tr>
         <tr><td>highlights.scm</td><td>The tree-sitter highlight query: drift's curated stack, or the grammar repo's bundled query — yours to edit either way.</td></tr>
+        <tr><td>injections.scm</td><td>Optional: embedded-language regions, tree-sitter style. html ships one, so <code>&lt;style&gt;</code> and <code>&lt;script&gt;</code> bodies highlight with the css / javascript grammars when those are installed too.</td></tr>
       </table>
       <pre><span class="c"># ~/.config/drift/languages/zig/language.toml</span>
 <span class="key">name</span> = <span class="s">"zig"</span>
