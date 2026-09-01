@@ -7,7 +7,7 @@ extensions = ["js", "mjs", "cjs", "jsx"]
 
 [grammar]
 repo = "https://github.com/tree-sitter/tree-sitter-javascript"
-rev = "f76aea6aa47322ea5c208c9c2e67f4a350d554f3"
+rev = "44c892e0be055ac465d5eeddae6d3e194424e7de"
 block_kinds = [
     "export_statement",
     "function_declaration",
