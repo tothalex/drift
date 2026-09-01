@@ -277,13 +277,32 @@ impl Vcs for GixVcs {
             .map_err(tool)?
             .tree_id()
             .map_err(tool)?;
-        let ancestor_index = self
+        let mut ancestor_index = self
             .repo
             .index_from_tree(&tree_id)
             .map_err(|err| VcsError::Tool(format!("index from tree: {err}")))?;
         // The real index tells committed additions apart from untracked
         // files (both are absent from the ancestor index).
         let tracked = self.repo.index_or_empty().map_err(tool)?;
+        // An index synthesized from a tree has no stat data, so the
+        // status walk would open and hash every tracked file to prove it
+        // unchanged — the whole scan cost in large repos. Grafting the
+        // real index's stat blocks onto entries with the same blob lets
+        // those files pass the stat shortcut, exactly like `git status`.
+        // (Same content at a matching stat ⇒ the worktree still holds
+        // this blob; entries left zeroed just fall back to hashing.)
+        let stats: Vec<(usize, gix::index::entry::Stat)> = ancestor_index
+            .entries()
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| {
+                let real = tracked.entry_by_path(entry.path(&ancestor_index))?;
+                (real.id == entry.id && real.mode == entry.mode).then_some((i, real.stat))
+            })
+            .collect();
+        for (i, stat) in stats {
+            ancestor_index.entries_mut()[i].stat = stat;
+        }
 
         let platform = self
             .repo
