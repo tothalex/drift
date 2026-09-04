@@ -9,7 +9,9 @@ view. **[tothalex.github.io/drift](https://tothalex.github.io/drift/)**
 The comparison point is `git merge-base <base> HEAD`, diffed against the
 working tree, so committed work, uncommitted edits, and untracked files
 all show up together. The base branch is auto-detected (`origin/HEAD`,
-then `main`, then `master`), and can be switched from inside the app.
+then `main`, then `master`; an orphan branch that shares no history with
+it falls back to its own upstream), and can be switched from inside the
+app.
 
 The same UI also opens real pull requests: browse the repo's open
 GitHub PRs or GitLab MRs, read the discussion, reply to review threads,

@@ -251,7 +251,7 @@
       <table>
         <tr><th>FLAG</th><th>MEANING</th></tr>
         <tr><td>[path]</td><td>Repository to review; defaults to the current directory.</td></tr>
-        <tr><td>-b, --base &lt;branch&gt;</td><td>Base branch to compare against. Auto-detected when absent: <code>origin/HEAD</code>, then <code>main</code>, then <code>master</code>.</td></tr>
+        <tr><td>-b, --base &lt;branch&gt;</td><td>Base branch to compare against. Auto-detected when absent: <code>origin/HEAD</code>, then <code>main</code>, then <code>master</code>; an orphan branch with no history in common falls back to its own upstream.</td></tr>
         <tr><td>--pr &lt;number&gt;</td><td>Open this pull request / merge request immediately (needs an authenticated <code>gh</code> or <code>glab</code>).</td></tr>
         <tr><td>--no-viewed-sync</td><td>Keep review checks local: don't tick files off as "viewed" on the pull request. GitHub only; same as <code>forge.viewed_sync = false</code>.</td></tr>
         <tr><td>--init-config</td><td>Write the fully documented default config to <code>~/.config/drift/config.toml</code> and exit.</td></tr>

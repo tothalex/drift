@@ -456,6 +456,72 @@ fn unborn_branch_reports_missing_revision() {
     ));
 }
 
+/// An orphan branch pushed to a remote: nothing in common with the
+/// default branch, but its upstream tracks it.
+fn orphan_fixture() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let remote = dir.join("remote.git");
+    git(dir, &["init", "-q", "--bare", "remote.git"]);
+    let work = dir.join("work");
+    std::fs::create_dir(&work).unwrap();
+    git(&work, &["init", "-q", "-b", "main"]);
+    git(&work, &["config", "user.email", "t@t.co"]);
+    git(&work, &["config", "user.name", "T"]);
+    git(&work, &["config", "commit.gpgsign", "false"]);
+    git(
+        &work,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+
+    write(&work, "main.txt", "main\n");
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-qm", "main root"]);
+    git(&work, &["push", "-q", "-u", "origin", "main"]);
+    git(&work, &["remote", "set-head", "origin", "main"]);
+
+    git(&work, &["checkout", "-q", "--orphan", "rewrite"]);
+    git(&work, &["rm", "-rfq", "."]);
+    write(&work, "rewrite.txt", "fresh start\n");
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-qm", "orphan root"]);
+    git(&work, &["push", "-q", "-u", "origin", "rewrite"]);
+    write(&work, "rewrite.txt", "fresh start\nedited\n");
+    tmp
+}
+
+#[test]
+fn orphan_branch_falls_back_to_its_upstream() {
+    let tmp = orphan_fixture();
+    let vcs = detect(&tmp.path().join("work")).unwrap();
+
+    let cmp = vcs.comparison(None).unwrap();
+    assert_eq!(cmp.base_label, "origin/rewrite");
+    assert_eq!(cmp.work_label, "rewrite");
+    let files = vcs.changed_files(&cmp).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, Path::new("rewrite.txt"));
+    assert_eq!(files[0].status, FileStatus::Modified);
+
+    // An explicit base is the user's choice — no silent substitution.
+    assert!(matches!(
+        vcs.comparison(Some("origin/main")),
+        Err(VcsError::NoCommonAncestor { base, .. }) if base == "origin/main"
+    ));
+}
+
+#[test]
+fn orphan_branch_without_upstream_still_errors() {
+    let tmp = orphan_fixture();
+    let work = tmp.path().join("work");
+    git(&work, &["branch", "--unset-upstream"]);
+    let vcs = detect(&work).unwrap();
+    assert!(matches!(
+        vcs.comparison(None),
+        Err(VcsError::NoCommonAncestor { base, .. }) if base == "origin/main"
+    ));
+}
+
 #[test]
 fn unignored_filters_gitignored_paths() {
     let tmp = fixture();
