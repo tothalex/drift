@@ -32,7 +32,8 @@ pub trait Vcs {
     fn root(&self) -> &Path;
 
     /// Resolve what to review: an explicit base override, or the provider's
-    /// notion of a default base (for git: origin/HEAD, then main, master).
+    /// notion of a default base (for git: origin/HEAD, then main, master;
+    /// when that shares no history with HEAD, HEAD's upstream).
     fn comparison(&self, base_override: Option<&str>) -> Result<Comparison, VcsError>;
 
     /// Everything different between the ancestor and the working copy —

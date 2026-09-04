@@ -62,6 +62,34 @@ impl GixVcs {
         Err(VcsError::NoDefaultBase)
     }
 
+    /// The short name of the remote-tracking ref for the checked-out
+    /// branch (e.g. `origin/feature`), if the branch has an upstream.
+    fn upstream_of_head(&self) -> Option<String> {
+        let head = self.repo.head_ref().ok()??;
+        let name = head
+            .remote_tracking_ref_name(gix::remote::Direction::Fetch)?
+            .ok()?;
+        let short = name.as_bstr().strip_prefix(b"refs/remotes/")?;
+        Some(short.to_str_lossy().into_owned())
+    }
+
+    fn merge_base_with_head(
+        &self,
+        base: &str,
+        head: gix::ObjectId,
+    ) -> Result<gix::ObjectId, VcsError> {
+        let base_id = self
+            .rev_commit_id(base)
+            .ok_or_else(|| VcsError::RevisionNotFound(base.to_string()))?;
+        self.repo
+            .merge_base(base_id, head)
+            .map(|id| id.detach())
+            .map_err(|_| VcsError::NoCommonAncestor {
+                base: base.to_string(),
+                work: "HEAD".to_string(),
+            })
+    }
+
     fn blob_at(&self, rev: &RevisionId, path: &Path) -> Option<Vec<u8>> {
         let id = gix::ObjectId::from_hex(rev.0.as_bytes()).ok()?;
         let commit = self.repo.find_object(id).ok()?.peel_to_commit().ok()?;
@@ -224,16 +252,25 @@ impl Vcs for GixVcs {
         let head = self
             .repo
             .head_id()
-            .map_err(|_| VcsError::RevisionNotFound("HEAD".to_string()))?;
-        let base_id = self
-            .rev_commit_id(&base)
-            .ok_or_else(|| VcsError::RevisionNotFound(base.clone()))?;
-        let ancestor = self.repo.merge_base(base_id, head.detach()).map_err(|_| {
-            VcsError::NoCommonAncestor {
-                base: base.clone(),
-                work: "HEAD".to_string(),
+            .map_err(|_| VcsError::RevisionNotFound("HEAD".to_string()))?
+            .detach();
+        let (base, ancestor) = match self.merge_base_with_head(&base, head) {
+            Ok(ancestor) => (base, ancestor),
+            // An orphan branch shares nothing with the detected default
+            // branch; its own upstream is the only meaningful base left.
+            // An explicit base is the user's choice, so it still errors.
+            Err(err @ VcsError::NoCommonAncestor { .. }) if base_override.is_none() => {
+                let fallback = self
+                    .upstream_of_head()
+                    .filter(|upstream| *upstream != base)
+                    .and_then(|upstream| {
+                        let ancestor = self.merge_base_with_head(&upstream, head).ok()?;
+                        Some((upstream, ancestor))
+                    });
+                fallback.ok_or(err)?
             }
-        })?;
+            Err(err) => return Err(err),
+        };
         let work_label = self
             .repo
             .head_name()

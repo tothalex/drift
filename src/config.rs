@@ -23,7 +23,8 @@ pub const EDITOR_DEFAULT: &str = "nvim +{line}";
 #[serde(deny_unknown_fields)]
 struct ConfigFile {
     /// Default base branch; the `--base` flag overrides it, and without
-    /// either the base is auto-detected (origin/HEAD, main, master).
+    /// either the base is auto-detected (origin/HEAD, main, master;
+    /// an orphan branch falls back to its upstream).
     #[serde(default)]
     base: Option<String>,
     /// Base color theme: a built-in name or a file in `themes/` next to
