@@ -8,6 +8,7 @@
 //! idle/working state, so targets carry none.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::Result;
 
@@ -153,6 +154,10 @@ fn resolve_targets(panes: &str, processes: &str, own_pane: Option<&str>) -> Vec<
                 id: pane.id.to_string(),
                 // tmux knows nothing about what the agent is doing.
                 status: String::new(),
+                cwd: PathBuf::from(pane.cwd),
+                // tmux tracks no session id, so a moved agent cannot
+                // be resolved — hence no board column for it.
+                session: None,
                 place,
                 where_label,
             })

@@ -19,6 +19,7 @@
 //! backend.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -167,6 +168,10 @@ fn resolve_targets(tree: &str, top: &str, processes: &str, own: &Cmux) -> Result
                     id: surface.id.clone(),
                     // cmux tracks notifications, not idle/working state.
                     status: String::new(),
+                    // cmux's window tree carries no per-surface cwd, so
+                    // its agents never land on a board row.
+                    cwd: PathBuf::new(),
+                    session: None,
                     place,
                     where_label,
                 });

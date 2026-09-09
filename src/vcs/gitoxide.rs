@@ -16,8 +16,8 @@ use gix::status::index_worktree::iter::Summary;
 use imara_diff::{Algorithm, Diff, InternedInput};
 
 use crate::vcs::model::{
-    ChangedFile, CommitInfo, Comparison, DiffLine, FileDiff, FileStatus, Hunk, LineKind,
-    RevisionId, Scope,
+    BranchInfo, ChangedFile, CommitInfo, Comparison, DiffLine, FileDiff, FileStatus, Hunk,
+    LineKind, RevisionId, Scope, WorktreeInfo,
 };
 use crate::vcs::{Vcs, VcsError};
 
@@ -121,6 +121,15 @@ impl GixVcs {
         Ok(RevisionId(head.detach().to_string()))
     }
 
+    /// The tip of the work side: the branch being reviewed off the
+    /// board, or this worktree's HEAD when the review is the live one.
+    fn work_rev(&self, cmp: &Comparison) -> Result<RevisionId, VcsError> {
+        match &cmp.work {
+            Some(rev) => Ok(rev.clone()),
+            None => self.head_rev(),
+        }
+    }
+
     /// The file's content on the old side of the scoped comparison: the
     /// ancestor, HEAD under the uncommitted scope, or the commit's first
     /// parent under a commit scope.
@@ -131,7 +140,7 @@ impl GixVcs {
         let old_path = file.old_path.as_deref().unwrap_or(&file.path);
         match &cmp.scope {
             Scope::Commit(rev) => self.blob_at(&self.first_parent(rev)?, old_path),
-            Scope::Uncommitted => self.blob_at(&self.head_rev().ok()?, old_path),
+            Scope::Uncommitted => self.blob_at(&self.work_rev(cmp).ok()?, old_path),
             _ => self.blob_at(&cmp.ancestor, old_path),
         }
     }
@@ -283,6 +292,40 @@ impl Vcs for GixVcs {
             ancestor: RevisionId(ancestor.to_string()),
             work_label,
             scope: Scope::default(),
+            work: None,
+        })
+    }
+
+    fn comparison_at(
+        &self,
+        base_override: Option<&str>,
+        work: &str,
+    ) -> Result<Comparison, VcsError> {
+        let base = match base_override {
+            Some(base) => base.to_string(),
+            None => self.default_base()?,
+        };
+        let base_id = self
+            .rev_commit_id(&base)
+            .ok_or_else(|| VcsError::RevisionNotFound(base.clone()))?;
+        let tip = self
+            .rev_commit_id(work)
+            .ok_or_else(|| VcsError::RevisionNotFound(work.to_string()))?;
+        let ancestor =
+            self.repo
+                .merge_base(base_id, tip)
+                .map_err(|_| VcsError::NoCommonAncestor {
+                    base: base.clone(),
+                    work: work.to_string(),
+                })?;
+        Ok(Comparison {
+            base_label: base,
+            ancestor: RevisionId(ancestor.to_string()),
+            work_label: work.to_string(),
+            // Committed, always: a branch has no working copy, and
+            // every other scope would claim to show one.
+            scope: Scope::Committed,
+            work: Some(RevisionId(tip.to_string())),
         })
     }
 
@@ -293,7 +336,18 @@ impl Vcs for GixVcs {
             // plays no part.
             Scope::Committed => {
                 let old = self.tree_of(&cmp.ancestor)?;
-                let new = self.tree_of(&self.head_rev()?)?;
+                let new = self.tree_of(&self.work_rev(cmp)?)?;
+                return self.tree_changed_files(old, new);
+            }
+            // A branch reviewed off the board has no working copy: its
+            // whole changeset is the tree diff to its tip, and nothing
+            // about it is uncommitted.
+            _ if cmp.work.is_some() => {
+                if cmp.scope == Scope::Uncommitted {
+                    return Ok(Vec::new());
+                }
+                let old = self.tree_of(&cmp.ancestor)?;
+                let new = self.tree_of(&self.work_rev(cmp)?)?;
                 return self.tree_changed_files(old, new);
             }
             _ => {}
@@ -409,10 +463,15 @@ impl Vcs for GixVcs {
             // committed work ends at HEAD.
             Scope::Commit(rev) => self.blob_at(rev, &file.path),
             Scope::Committed => self
-                .head_rev()
+                .work_rev(cmp)
                 .ok()
-                .and_then(|head| self.blob_at(&head, &file.path)),
-            _ => std::fs::read(self.root.join(&file.path)).ok(),
+                .and_then(|tip| self.blob_at(&tip, &file.path)),
+            // The working copy is the new side only when the review is
+            // this worktree's own; a branch's ends at its tip.
+            _ => match &cmp.work {
+                Some(tip) => self.blob_at(tip, &file.path),
+                None => std::fs::read(self.root.join(&file.path)).ok(),
+            },
         };
         if is_binary(old.as_deref()) || is_binary(new.as_deref()) {
             return Ok(FileDiff::Binary);
@@ -463,9 +522,36 @@ impl Vcs for GixVcs {
             .collect()
     }
 
-    fn branches(&self) -> Result<Vec<String>, VcsError> {
+    fn worktrees(&self) -> Result<Vec<WorktreeInfo>, VcsError> {
+        // gix lists linked worktrees only, so the main one is added by
+        // hand — from the board's point of view it is just another row.
+        let mut out = Vec::new();
+        if let Ok(main) = self.repo.main_repo()
+            && let Some(info) = worktree_info(&main)
+        {
+            out.push(info);
+        }
+        for proxy in self.repo.worktrees().map_err(tool)? {
+            // A worktree whose directory was deleted without `git
+            // worktree prune` still has its private git dir; skip it
+            // rather than offering a row that cannot be opened.
+            if let Ok(repo) = proxy.into_repo()
+                && let Some(info) = worktree_info(&repo)
+            {
+                out.push(info);
+            }
+        }
+        out.sort_by_key(|info| -info.last_commit);
+        Ok(out)
+    }
+
+    fn work_tip(&self, cmp: &Comparison) -> Option<RevisionId> {
+        self.work_rev(cmp).ok()
+    }
+
+    fn branch_tips(&self) -> Result<Vec<BranchInfo>, VcsError> {
         let platform = self.repo.references().map_err(tool)?;
-        let mut branches: Vec<(String, i64)> = Vec::new();
+        let mut branches: Vec<BranchInfo> = Vec::new();
         for prefix in ["refs/heads/", "refs/remotes/"] {
             let iter = platform.prefixed(prefix).map_err(tool)?;
             for reference in iter.flatten() {
@@ -474,37 +560,43 @@ impl Vcs for GixVcs {
                     continue;
                 }
                 let name = reference.name().shorten().to_str_lossy().into_owned();
-                if branches.iter().any(|(b, _)| *b == name) {
+                if branches.iter().any(|branch| branch.name == name) {
                     continue;
                 }
-                let time = reference
+                let Some(commit) = reference
                     .id()
                     .object()
                     .ok()
-                    .and_then(|o| o.peel_to_commit().ok())
-                    .and_then(|c| c.time().ok())
-                    .map_or(0, |t| t.seconds);
-                branches.push((name, time));
+                    .and_then(|object| object.peel_to_commit().ok())
+                else {
+                    continue;
+                };
+                branches.push(BranchInfo {
+                    name,
+                    tip: RevisionId(commit.id.to_string()),
+                    last_commit: commit.time().map_or(0, |time| time.seconds),
+                });
             }
         }
-        branches.sort_by_key(|(_, time)| -time);
-        Ok(branches.into_iter().map(|(name, _)| name).collect())
+        branches.sort_by_key(|branch| -branch.last_commit);
+        Ok(branches)
     }
 
     fn commits(&self, cmp: &Comparison) -> Result<Vec<CommitInfo>, VcsError> {
-        let head = self
-            .repo
-            .head_id()
-            .map_err(|_| VcsError::RevisionNotFound("HEAD".to_string()))?;
+        let tip = gix::ObjectId::from_hex(self.work_rev(cmp)?.0.as_bytes())
+            .map_err(|err| VcsError::Tool(format!("bad work id: {err}")))?;
         let ancestor = gix::ObjectId::from_hex(cmp.ancestor.0.as_bytes())
             .map_err(|err| VcsError::Tool(format!("bad ancestor id: {err}")))?;
-        // On the base itself (merge-base == HEAD) hiding the ancestor
+        // On the base itself (merge-base == tip) hiding the ancestor
         // would hide everything; offer recent history instead, capped so
         // a long-lived repo doesn't stall the picker.
-        let on_base = head.detach() == ancestor;
-        let mut walk = self.repo.rev_walk([head.detach()]).sorting(
-            gix::revision::walk::Sorting::ByCommitTime(Default::default()),
-        );
+        let on_base = tip == ancestor;
+        let mut walk =
+            self.repo
+                .rev_walk([tip])
+                .sorting(gix::revision::walk::Sorting::ByCommitTime(
+                    Default::default(),
+                ));
         if !on_base {
             walk = walk.with_hidden([ancestor]);
         }
@@ -642,4 +734,37 @@ fn build_hunk(group: &[imara_diff::Hunk], old_lines: &[&str], new_lines: &[&str]
 /// Git's heuristic: a NUL byte in the first 8000 bytes means binary.
 fn is_binary(content: Option<&[u8]>) -> bool {
     content.is_some_and(|bytes| bytes[..bytes.len().min(8000)].contains(&0))
+}
+
+/// Board row for one already-opened worktree: name, branch, tip time.
+/// `None` for a bare or worktree-less repository.
+fn worktree_info(repo: &gix::Repository) -> Option<WorktreeInfo> {
+    // Canonical, because the main worktree's workdir is however drift
+    // was invoked ("." when launched in place) — the board needs a real
+    // name to show and a real path to match agent directories against.
+    let path = repo.workdir()?.canonicalize().ok()?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let head = repo.head().ok();
+    let branch = head
+        .as_ref()
+        .and_then(|head| head.referent_name())
+        .map(|name| name.shorten().to_str_lossy().into_owned());
+    // An unborn branch has no tip: it sorts last rather than dropping
+    // the worktree off the board.
+    let last_commit = repo
+        .head_id()
+        .ok()
+        .and_then(|id| id.object().ok())
+        .and_then(|object| object.peel_to_commit().ok())
+        .and_then(|commit| commit.time().ok())
+        .map_or(0, |time| time.seconds);
+    Some(WorktreeInfo {
+        name,
+        path,
+        branch,
+        last_commit,
+    })
 }

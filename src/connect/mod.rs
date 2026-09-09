@@ -13,9 +13,11 @@
 
 mod cmux;
 mod herdr;
+mod session;
 mod tmux;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::{Result, anyhow, bail};
 
@@ -226,6 +228,14 @@ pub trait Bridge {
     /// Agent panes a prompt can go to, excluding drift's own pane,
     /// closest first (same tab, same workspace, elsewhere).
     fn targets(&self) -> Result<Vec<AgentTarget>>;
+    /// Agents for the review board's column, each `cwd` resolved to the
+    /// directory the agent is working in rather than the one its pane
+    /// sits in. Empty by default: only herdr reports the session ids
+    /// that make the difference resolvable, and a column that credits
+    /// an agent to the wrong branch is worse than no column at all.
+    fn board_agents(&self) -> Result<Vec<AgentTarget>> {
+        Ok(Vec::new())
+    }
     /// Insert `text` into the target's input; `submit` presses enter.
     fn send(&self, target_id: &str, text: &str, submit: bool) -> Result<()>;
 }
@@ -251,6 +261,14 @@ pub struct AgentTarget {
     pub id: String,
     /// "idle" / "working" / "blocked", when known.
     pub status: String,
+    /// The pane's working directory, when the backend reports one, or
+    /// the session's own once [`Bridge::board_agents`] has resolved it.
+    /// The review board joins agents to worktrees on it; empty means
+    /// the agent simply doesn't appear on a row.
+    pub cwd: PathBuf,
+    /// The agent's session id, for the backends that track one — what
+    /// [`session::working_dir`] needs to find where the agent moved.
+    pub session: Option<String>,
     pub place: Place,
     /// Where the target is, in human terms: "this tab", the workspace
     /// and tab names ("drift:2"), or the agent's directory.
@@ -379,6 +397,8 @@ mod tests {
             name: "claude".to_string(),
             id: "%1".to_string(),
             status: String::new(),
+            cwd: PathBuf::new(),
+            session: None,
             place: Place::SameTab,
             where_label: "this tab".to_string(),
         };

@@ -41,7 +41,9 @@ use crate::keymap::{Action, Keymap};
 use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
 use crate::ui::CODE_GUTTER;
-use crate::vcs::model::{ChangedFile, Comparison, FileDiff, LineKind, RevisionId, Scope};
+use crate::vcs::model::{
+    ChangedFile, CommitInfo, Comparison, FileDiff, LineKind, RevisionId, Scope, WorktreeStats,
+};
 use crate::vcs::{self, Vcs};
 
 use code_view::{CodeView, TextPos};
@@ -49,7 +51,10 @@ use compose::{Compose, ComposeKind};
 use panes::PaneLayout;
 use peek::Peek;
 use picker::pr_label;
-pub use picker::{AgentPicker, BasePicker, Picker, PrPicker, ScopePicker};
+pub use picker::{
+    AgentPicker, BasePicker, BoardAction, BoardAxis, BoardLine, BoardMemory, BoardRow, Descend,
+    Picker, PrPicker, RowId, ScopePicker, WorktreeBoard,
+};
 use pr::PrSession;
 use review::Review;
 use tree_nav::TreeNav;
@@ -61,6 +66,12 @@ pub enum Pane {
     Tree,
     Code,
 }
+
+/// How many branches the board's branch axis lists. Branches are
+/// ordered by their tip, so the cap drops only long-dormant ones —
+/// and each row costs a rev walk to count. Every branch is still
+/// reachable as a comparison base.
+const BRANCH_ROWS: usize = 50;
 
 /// Live-reload bookkeeping: paths the watcher flagged since the last
 /// applied refresh (their views are stale), whether git metadata moved
@@ -224,6 +235,21 @@ pub struct App {
     keyboard_enhanced: bool,
     /// The `[update]` config: whether launch checks for a newer release.
     update_check: bool,
+    /// The live watcher's kill switch. Switching worktrees retires the
+    /// old watcher and starts one on the new root.
+    watcher_alive: Arc<AtomicBool>,
+    /// Staleness counter for the review board's background fill.
+    board_seq: u64,
+    /// The board as it was last left, so `b` reopens on it.
+    board_memory: BoardMemory,
+    /// The picker's `/` query and whether it is still being typed —
+    /// every overlay searches the same way, so the state is one
+    /// place rather than one per picker.
+    picker_search: String,
+    picker_search_input: bool,
+    /// Review checks parked per worktree, so bouncing between agents
+    /// doesn't lose what you already ticked off in each.
+    checks_by_target: HashMap<RowId, Review>,
     quit: bool,
 }
 
@@ -279,6 +305,15 @@ impl App {
             pending_delete: None,
             keyboard_enhanced: false,
             update_check: config.update.check,
+            watcher_alive: Arc::new(AtomicBool::new(true)),
+            board_seq: 0,
+            board_memory: BoardMemory {
+                axis: config.board_first,
+                ..BoardMemory::default()
+            },
+            picker_search: String::new(),
+            picker_search_input: false,
+            checks_by_target: HashMap::new(),
             quit: false,
         };
         app.reload()?;
@@ -485,7 +520,7 @@ impl App {
     }
 
     /// UI copy: "pull request" or "merge request", once a forge is known.
-    fn noun(&self) -> &'static str {
+    pub(crate) fn noun(&self) -> &'static str {
         self.forge
             .as_ref()
             .map_or("pull request", |forge| forge.pr_noun())
@@ -519,7 +554,11 @@ impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         self.keyboard_enhanced = push_keyboard_enhancement();
         spawn_input_thread(self.events_tx.clone(), Arc::clone(&self.input_paused));
-        spawn_watcher_thread(self.events_tx.clone(), self.vcs.root().to_path_buf());
+        spawn_watcher_thread(
+            self.events_tx.clone(),
+            self.vcs.root().to_path_buf(),
+            Arc::clone(&self.watcher_alive),
+        );
         if self.update_check {
             crate::update::spawn_launch_check(self.events_tx.clone());
         }
@@ -548,6 +587,14 @@ impl App {
                 }
                 AppEvent::FsChanged { paths, meta } => {
                     self.on_fs_changed(paths, meta);
+                    Ok(())
+                }
+                AppEvent::BoardAgentsReady { seq, agents } => {
+                    self.on_board_agents(seq, agents);
+                    Ok(())
+                }
+                AppEvent::BoardStatsReady { seq, row, stats } => {
+                    self.on_board_stats(seq, row, stats);
                     Ok(())
                 }
                 AppEvent::StatusReady { seq, result } => self.on_status_ready(seq, result),
@@ -804,10 +851,10 @@ impl App {
             Action::CopyPath => self.copy_path(),
             Action::GrowTree => self.layout.resize(2 * count),
             Action::ShrinkTree => self.layout.resize(-2 * count),
-            Action::PickBase | Action::PickScope if self.pr.is_some() => {
+            Action::PickBoard | Action::PickScope if self.pr.is_some() => {
                 self.notice = Some("in a pull request — p picks another or exits".to_string());
             }
-            Action::PickBase => self.open_base_picker()?,
+            Action::PickBoard => self.open_board(),
             Action::PickScope => self.open_scope_picker(),
             Action::PickPr => self.open_pr_picker(),
             Action::Comment => self.request_comment(false),
@@ -931,7 +978,7 @@ impl App {
             }
             None => (
                 self.vcs.file_diff(&self.cmp, file).ok()?,
-                std::fs::read_to_string(self.vcs.root().join(&file.path)).ok()?,
+                view_cache::new_side_source(file, self.vcs.as_ref(), &self.cmp)?,
             ),
         };
         crate::processor::tabs::expand_diff(&mut diff);
@@ -939,50 +986,491 @@ impl App {
     }
 
     /// Picker keys are a fixed modal micro-map: j/k/arrows move, Enter
-    /// selects, Esc/q cancel. Choosing a branch chains into the scope
-    /// picker; choosing a scope applies it.
+    /// selects, Esc/q cancel — plus h/l on the board, which nests.
+    /// Choosing a base returns to the board, whose counts are stated
+    /// against it; choosing a scope applies it.
     fn handle_picker_key(&mut self, code: KeyCode) -> Result<()> {
+        // `/` input claims every key while it is up, the way it does in
+        // the panes: the cursor follows matches live, Enter keeps the
+        // query for n/N, Esc drops it.
+        if self.picker_search_input {
+            match code {
+                KeyCode::Esc => {
+                    self.picker_search.clear();
+                    self.picker_search_input = false;
+                }
+                KeyCode::Enter => self.picker_search_input = false,
+                KeyCode::Backspace => {
+                    self.picker_search.pop();
+                    self.jump_picker_match(0, 1);
+                }
+                KeyCode::Char(c) => {
+                    self.picker_search.push(c);
+                    self.jump_picker_match(0, 1);
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+        // Vim-style count prefix, as in the panes: digits accumulate
+        // and repeat the next motion (`10j`, `12G`). A bare `0` only
+        // counts once a prefix started.
+        if let KeyCode::Char(digit @ '0'..='9') = code
+            && !(digit == '0' && self.count.is_none())
+        {
+            let digit = digit as usize - '0' as usize;
+            self.count = Some((self.count.unwrap_or(0) * 10 + digit).min(9999));
+            return Ok(());
+        }
+        let line = self.count.take();
+        let count = line.unwrap_or(1).max(1) as isize;
         match code {
-            KeyCode::Esc | KeyCode::Char('q') => self.picker = None,
+            KeyCode::Esc | KeyCode::Char('q') => {
+                // Remembered on dismissal too: `b` is a glance, and
+                // glancing twice should land in the same place.
+                if let Some(Picker::Board(board)) = self.picker.take() {
+                    self.remember_board(&board);
+                }
+                self.picker = None;
+                self.clear_picker_search();
+            }
+            // `b` opened the board; pressing it again flips the axis,
+            // worktrees ↔ branches, each keeping its own place.
+            KeyCode::Char('b') if self.board_open() => self.switch_board_axis(),
+            // Only the board nests, so only the board answers h/l. `l`
+            // carries the whole descent: it folds a worktree row either
+            // way, and on a scope — where there is nothing left to open
+            // — it selects, so walking in never needs a second key.
+            // `h` always folds, from a scope line as well as the row.
+            KeyCode::Char('l') | KeyCode::Right if self.board_open() => {
+                let descend = match &self.picker {
+                    Some(Picker::Board(board)) => board.descend(),
+                    _ => None,
+                };
+                match descend {
+                    Some(Descend::Fold(expand)) => self.toggle_board_row(expand),
+                    Some(Descend::Choose) => {
+                        if let Some(Picker::Board(board)) = self.picker.take() {
+                            self.remember_board(&board);
+                            self.clear_picker_search();
+                            self.choose_board_line(board)?;
+                        }
+                    }
+                    None => {}
+                }
+            }
+            KeyCode::Char('h') | KeyCode::Left if self.board_open() => self.toggle_board_row(false),
             KeyCode::Char('k') | KeyCode::Up => {
                 if let Some(picker) = &mut self.picker {
-                    picker.move_cursor(-1);
+                    picker.move_cursor(-count);
                 }
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 if let Some(picker) = &mut self.picker {
-                    picker.move_cursor(1);
+                    picker.move_cursor(count);
                 }
             }
-            KeyCode::Enter => match self.picker.take() {
-                Some(Picker::Base(picker)) => {
-                    let base = picker.branches[picker.cursor].clone();
-                    if self.set_base(&base)? {
-                        self.open_scope_picker();
+            // `g`/`G` are the first and last line, or the line a count
+            // names — `12G` as in vim, and `12g` likewise, since the
+            // picker has no second `g` to wait for.
+            KeyCode::Char('g') | KeyCode::Home => {
+                if let Some(picker) = &mut self.picker {
+                    picker.set_cursor(line.map_or(0, |line| line.saturating_sub(1)));
+                }
+            }
+            KeyCode::Char('G') | KeyCode::End => {
+                if let Some(picker) = &mut self.picker {
+                    let last = picker.len().saturating_sub(1);
+                    picker.set_cursor(line.map_or(last, |line| line.saturating_sub(1)));
+                }
+            }
+            KeyCode::Char('/') => {
+                self.picker_search.clear();
+                self.picker_search_input = true;
+            }
+            KeyCode::Char('n') => self.jump_picker_match(count, 1),
+            KeyCode::Char('N') => self.jump_picker_match(count, -1),
+            KeyCode::Enter => {
+                // On an open board row Enter closes it rather than
+                // picking: it is the key that opened what is under it.
+                if let Some(Picker::Board(board)) = &self.picker
+                    && board.enter_folds()
+                {
+                    self.toggle_board_row(false);
+                    return Ok(());
+                }
+                self.clear_picker_search();
+                match self.picker.take() {
+                    Some(Picker::Board(board)) => {
+                        self.remember_board(&board);
+                        self.choose_board_line(board)?;
                     }
-                }
-                Some(Picker::Scope(picker)) => {
-                    let scope = picker.entries[picker.cursor].0.clone();
-                    self.set_scope(scope)?;
-                }
-                Some(Picker::Pr(picker)) => {
-                    if picker.back && picker.cursor == 0 {
-                        self.leave_pr_session()?;
-                    } else if let Some(item) =
-                        picker.items.get(picker.cursor - usize::from(picker.back))
-                    {
-                        self.open_pr(item.number);
+                    Some(Picker::Base(picker)) => {
+                        let base = picker.branches[picker.cursor].clone();
+                        if self.set_base(&base)? {
+                            self.open_board();
+                        }
                     }
+                    Some(Picker::Scope(picker)) => {
+                        let scope = picker.entries[picker.cursor].0.clone();
+                        self.set_scope(scope)?;
+                    }
+                    Some(Picker::Pr(picker)) => {
+                        if picker.back && picker.cursor == 0 {
+                            self.leave_pr_session()?;
+                        } else if let Some(item) =
+                            picker.items.get(picker.cursor - usize::from(picker.back))
+                        {
+                            self.open_pr(item.number);
+                        }
+                    }
+                    Some(Picker::Agent(picker)) if picker.cursor < picker.targets.len() => {
+                        self.open_agent_compose(picker.targets, picker.cursor, picker.ctx);
+                    }
+                    Some(Picker::Agent(_)) => {}
+                    None => {}
                 }
-                Some(Picker::Agent(picker)) if picker.cursor < picker.targets.len() => {
-                    self.open_agent_compose(picker.targets, picker.cursor, picker.ctx);
-                }
-                Some(Picker::Agent(_)) => {}
-                None => {}
-            },
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Open the review board: every worktree of this repo, or every
+    /// branch of it, most recently committed first. Rows go up
+    /// immediately with what refs alone can say; agents and counts fill
+    /// in from a background thread, because a status scan per worktree
+    /// is far too slow to hold a panel open on.
+    fn open_board(&mut self) {
+        let worktrees = match self.vcs.worktrees() {
+            Ok(worktrees) => worktrees,
+            Err(err) => {
+                self.notice = Some(format!("cannot list worktrees: {err}"));
+                Vec::new()
+            }
+        };
+        // Branch rows are built even when the worktree axis is up: `b`
+        // must flip instantly, and a ref walk is cheap next to the
+        // counting that follows.
+        let branches = self.vcs.branch_tips().unwrap_or_default();
+        self.board_seq += 1;
+        let seq = self.board_seq;
+        let root = self.canonical_root();
+        let worktrees: Vec<BoardRow> = worktrees
+            .into_iter()
+            .map(|info| BoardRow::from_worktree(info, &root))
+            .collect();
+        let branches: Vec<BoardRow> = branches
+            .into_iter()
+            .take(BRANCH_ROWS)
+            .map(|info| BoardRow::from_branch(info, &self.cmp.work_label))
+            .collect();
+        let ids: Vec<RowId> = worktrees
+            .iter()
+            .chain(branches.iter())
+            .map(|row| row.id.clone())
+            .collect();
+        let mut board = WorktreeBoard::new(worktrees, branches, self.board_memory.axis, seq);
+        self.restore_axis(&mut board);
+        self.picker = Some(Picker::Board(board));
+
+        let tx = self.events_tx.clone();
+        let agent_config = self.agent_config.clone();
+        let base = self.cmp.base_label.clone();
+        let scan_root = self.vcs.root().to_path_buf();
+        std::thread::spawn(move || {
+            // Agents first: one CLI round-trip, and the column readers
+            // care about most. Counts then stream in per row.
+            if let Some(bridge) = connect::detect(&agent_config)
+                && let Ok(agents) = bridge.board_agents()
+            {
+                let _ = tx.send(AppEvent::BoardAgentsReady { seq, agents });
+            }
+            for id in ids {
+                let stats = match &id {
+                    RowId::Worktree(path) => vcs::worktree_stats(path, &base),
+                    RowId::Branch(name) => vcs::branch_stats(&scan_root, &base, name),
+                };
+                if let Some(stats) = stats
+                    && tx
+                        .send(AppEvent::BoardStatsReady {
+                            seq,
+                            row: id,
+                            stats,
+                        })
+                        .is_err()
+                {
+                    return;
+                }
+            }
+        });
+    }
+
+    fn on_board_agents(&mut self, seq: u64, agents: Vec<AgentTarget>) {
+        if let Some(Picker::Board(board)) = &mut self.picker
+            && board.seq == seq
+        {
+            board.set_agents(&agents);
+        }
+    }
+
+    fn on_board_stats(&mut self, seq: u64, row: RowId, stats: WorktreeStats) {
+        if let Some(Picker::Board(board)) = &mut self.picker
+            && board.seq == seq
+        {
+            board.set_stats(&row, stats);
+        }
+    }
+
+    /// Move the cursor to a `/` match: `count` matches on from where
+    /// the cursor is (`step` +1 forwards, -1 back), or — while the
+    /// query is still being typed, `count` 0 — to the first match from
+    /// the top, so the list settles as the query narrows.
+    fn jump_picker_match(&mut self, count: isize, step: isize) {
+        let query = self.picker_search.clone();
+        let Some(picker) = &mut self.picker else {
+            return;
+        };
+        if query.is_empty() {
+            return;
+        }
+        if count == 0 {
+            if let Some(index) = picker.find(&query, 0, 1) {
+                picker.set_cursor(index);
+            }
+            return;
+        }
+        let len = picker.len().max(1) as isize;
+        for _ in 0..count {
+            let from = (picker.cursor() as isize + step).rem_euclid(len) as usize;
+            let Some(index) = picker.find(&query, from, step) else {
+                break;
+            };
+            picker.set_cursor(index);
+        }
+    }
+
+    /// The picker's `/` query, for the panel caption. Empty when there
+    /// is none to show.
+    pub fn picker_search(&self) -> &str {
+        &self.picker_search
+    }
+
+    /// Whether the picker's `/` query is still being typed — the
+    /// caption shows a cursor while it is.
+    pub fn picker_search_input(&self) -> bool {
+        self.picker_search_input
+    }
+
+    /// A picker is going away: its `/` query goes with it, since the
+    /// next list is a different set of lines.
+    fn clear_picker_search(&mut self) {
+        self.picker_search.clear();
+        self.picker_search_input = false;
+    }
+
+    /// Remember the board for the next `b`: the axis that was up and
+    /// that axis's own place.
+    fn remember_board(&mut self, board: &WorktreeBoard) {
+        self.board_memory.axis = board.axis;
+        self.board_memory.set(board.axis, board.remember());
+    }
+
+    /// Flip the board to its other axis, worktrees ↔ branches, keeping
+    /// each list's place: the axis you leave is remembered exactly as
+    /// the board itself is remembered across opens.
+    fn switch_board_axis(&mut self) {
+        let Some(Picker::Board(mut board)) = self.picker.take() else {
+            return;
+        };
+        self.board_memory.set(board.axis, board.remember());
+        board.axis = board.axis.other();
+        self.board_memory.axis = board.axis;
+        board.open_on_current();
+        self.restore_axis(&mut board);
+        self.picker = Some(Picker::Board(board));
+    }
+
+    /// Reopen an axis where it was left: the rows that were expanded
+    /// open again, and the cursor returns to the line it was on. Their
+    /// commits are re-read rather than remembered — a stale list is
+    /// exactly what you came back to check.
+    fn restore_axis(&self, board: &mut WorktreeBoard) {
+        for id in self.board_memory.axis(board.axis).expanded.clone() {
+            let commits = self.row_commits(&id);
+            board.expand(&id, Some(commits));
+        }
+        board.reflow();
+        if let Some(mark) = &self.board_memory.axis(board.axis).cursor {
+            board.place_cursor(mark);
+        }
+    }
+
+    /// One row's commits against the current base, for a row being
+    /// opened: one rev walk, cheap enough to do inline.
+    fn row_commits(&self, id: &RowId) -> Vec<CommitInfo> {
+        let base = self.cmp.base_label.clone();
+        match id {
+            // A worktree is read through its own provider handle: the
+            // base may resolve differently there.
+            RowId::Worktree(path) => vcs::detect(path)
+                .ok()
+                .and_then(|vcs| {
+                    let cmp = vcs.comparison(Some(&base)).ok()?;
+                    vcs.commits(&cmp).ok()
+                })
+                .unwrap_or_default(),
+            RowId::Branch(name) => self
+                .vcs
+                .comparison_at(Some(&base), name)
+                .ok()
+                .and_then(|cmp| self.vcs.commits(&cmp).ok())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Expand or collapse the board row under the cursor. Commits are
+    /// read on first expand, and only for the row being opened.
+    fn toggle_board_row(&mut self, expand: bool) {
+        let Some(Picker::Board(board)) = &self.picker else {
+            return;
+        };
+        let Some(index) = board.row_at_cursor() else {
+            return;
+        };
+        let id = board.rows()[index].id.clone();
+        let commits = match expand && board.rows()[index].commits.is_empty() {
+            true => Some(self.row_commits(&id)),
+            false => None,
+        };
+        let Some(Picker::Board(board)) = &mut self.picker else {
+            return;
+        };
+        match expand {
+            true => board.expand(&id, commits),
+            false => board.collapse(&id),
+        }
+        board.reflow();
+    }
+
+    /// Review whatever a board row is about, optionally narrowed to one
+    /// scope: a worktree's working copy, or a branch at its tip.
+    fn review_row(&mut self, id: &RowId, scope: Option<Scope>) -> Result<()> {
+        match id {
+            RowId::Worktree(path) => self.switch_worktree(&path.clone(), scope),
+            RowId::Branch(name) => self.review_branch(&name.clone(), scope),
+        }
+    }
+
+    /// Review a branch at its tip. No checkout and no worktree switch:
+    /// every worktree of a repo shares its objects, so the branch is
+    /// read where drift already sits — which is why only committed work
+    /// is in scope, the working copy beside drift being someone else's.
+    fn review_branch(&mut self, branch: &str, scope: Option<Scope>) -> Result<()> {
+        let cmp = match self.vcs.comparison_at(Some(&self.cmp.base_label), branch) {
+            Ok(cmp) => cmp,
+            Err(err) => {
+                self.notice = Some(format!("cannot review {branch}: {err}"));
+                return Ok(());
+            }
+        };
+        self.take_checks(RowId::Branch(branch.to_string()));
+        self.cmp = cmp;
+        if let Some(scope) = scope {
+            self.cmp.scope = scope;
+        }
+        self.generation += 1;
+        self.reload()
+    }
+
+    /// What the review checks on screen belong to. Ticks are parked per
+    /// target, so bouncing between agents — or between a branch and the
+    /// worktree that has it checked out — doesn't lose what you already
+    /// ticked off in each.
+    fn review_target(&self) -> RowId {
+        match self.cmp.work.is_some() {
+            true => RowId::Branch(self.cmp.work_label.clone()),
+            false => RowId::Worktree(self.canonical_root()),
+        }
+    }
+
+    /// Park the checks of the review on screen and take `next`'s.
+    fn take_checks(&mut self, next: RowId) {
+        let current = self.review_target();
+        if current == next {
+            return;
+        }
+        self.checks_by_target
+            .insert(current, std::mem::take(&mut self.review));
+        self.review = self.checks_by_target.remove(&next).unwrap_or_default();
+    }
+
+    /// Review a different worktree: swap the provider, restart the file
+    /// watcher on the new root, and park the review checks under the
+    /// old root so coming back restores them.
+    fn switch_worktree(&mut self, path: &Path, scope: Option<Scope>) -> Result<()> {
+        if *path != self.canonical_root() {
+            let vcs = match vcs::detect(path) {
+                Ok(vcs) => vcs,
+                Err(err) => {
+                    self.notice = Some(format!("cannot open {}: {err}", path.display()));
+                    return Ok(());
+                }
+            };
+            // The base may not exist in the new worktree (a different
+            // remote, a pruned branch); fall back to its own default
+            // rather than refusing to switch.
+            let cmp = match vcs.comparison(Some(&self.cmp.base_label)) {
+                Ok(cmp) => cmp,
+                Err(_) => vcs.comparison(None)?,
+            };
+            self.take_checks(RowId::Worktree(path.to_path_buf()));
+
+            self.watcher_alive.store(false, Ordering::Relaxed);
+            self.watcher_alive = Arc::new(AtomicBool::new(true));
+            spawn_watcher_thread(
+                self.events_tx.clone(),
+                path.to_path_buf(),
+                Arc::clone(&self.watcher_alive),
+            );
+
+            self.vcs = vcs;
+            self.cmp = cmp;
+            self.generation += 1;
+        }
+        if let Some(scope) = scope {
+            self.cmp.scope = scope;
+        }
+        self.reload()
+    }
+
+    /// The repo root as the board spells it — worktree paths are
+    /// canonical, the root is however drift was invoked.
+    fn canonical_root(&self) -> PathBuf {
+        let root = self.vcs.root();
+        root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+    }
+
+    pub(crate) fn board_open(&self) -> bool {
+        matches!(self.picker, Some(Picker::Board(_)))
+    }
+
+    /// Act on the board line under the cursor: a worktree switches to
+    /// it keeping the current scope, a scope line switches and narrows
+    /// in one step, and a footer action chains into the picker it names.
+    fn choose_board_line(&mut self, board: WorktreeBoard) -> Result<()> {
+        match board.lines.get(board.cursor) {
+            Some(BoardLine::Row(index)) => self.review_row(&board.rows()[*index].id, None),
+            Some(BoardLine::Scope { row, scope, .. }) => {
+                self.review_row(&board.rows()[*row].id, Some(scope.clone()))
+            }
+            Some(BoardLine::Action(BoardAction::Base)) => self.open_base_picker(),
+            Some(BoardLine::Action(BoardAction::Pr)) => {
+                self.open_pr_picker();
+                Ok(())
+            }
+            None => Ok(()),
+        }
     }
 
     fn open_base_picker(&mut self) -> Result<()> {
@@ -1007,11 +1495,16 @@ impl App {
                 Vec::new()
             }
         };
-        let mut entries = vec![
-            (Scope::All, "all changes".to_string()),
-            (Scope::Committed, "committed changes".to_string()),
-            (Scope::Uncommitted, "uncommitted changes".to_string()),
-        ];
+        // A branch reviewed off the board has no working copy: every
+        // slice but a single commit is the same committed changeset.
+        let mut entries = match self.cmp.work.is_some() {
+            true => vec![(Scope::Committed, "all commits".to_string())],
+            false => vec![
+                (Scope::All, "all changes".to_string()),
+                (Scope::Committed, "committed changes".to_string()),
+                (Scope::Uncommitted, "uncommitted changes".to_string()),
+            ],
+        };
         entries.extend(commits.into_iter().map(|commit| {
             let label = format!("{} {}", commit.short_id, commit.summary);
             (Scope::Commit(commit.id), label)
@@ -1603,7 +2096,15 @@ impl App {
         if base == self.cmp.base_label {
             return Ok(true);
         }
-        match self.vcs.comparison(Some(base)) {
+        // A branch review keeps its branch: only what it is measured
+        // against changes.
+        let resolved = match self.cmp.work.is_some() {
+            true => self
+                .vcs
+                .comparison_at(Some(base), &self.cmp.work_label.clone()),
+            false => self.vcs.comparison(Some(base)),
+        };
+        match resolved {
             Ok(cmp) => {
                 self.cmp = cmp;
                 self.reload()?;
@@ -1645,14 +2146,14 @@ impl App {
         let in_code = self.layout.code_area.contains(position);
         let tree_viewport = self.tree_viewport();
         match mouse.kind {
-            // The comparison segment at the status bar's left edge opens
-            // the picker, mirroring the pick_base key (or, in a PR
-            // session, the PR picker).
+            // The comparison segment at the status bar's left edge says
+            // what is under review, so clicking it opens the board that
+            // changes it (or, in a PR session, the PR picker).
             MouseEventKind::Down(MouseButton::Left) if self.on_comparison_label(position) => {
                 if self.pr.is_some() {
                     self.open_pr_picker();
                 } else {
-                    self.open_base_picker()?;
+                    self.open_board();
                 }
             }
             MouseEventKind::Down(MouseButton::Left) if self.layout.on_divider(position) => {
@@ -2640,7 +3141,13 @@ fn scan_status(
 ) -> Result<(Comparison, Vec<ChangedFile>), String> {
     let vcs = vcs::detect(root).map_err(|e| e.to_string())?;
     let mut cmp = if refresh_cmp {
-        match vcs.comparison(Some(&cmp.base_label)) {
+        // A branch review re-resolves at its own branch, which also
+        // means a commit landing on it shows up live.
+        let fresh = match cmp.work.is_some() {
+            true => vcs.comparison_at(Some(&cmp.base_label), &cmp.work_label),
+            false => vcs.comparison(Some(&cmp.base_label)),
+        };
+        match fresh {
             Ok(mut fresh) => {
                 fresh.scope = cmp.scope.clone();
                 fresh
