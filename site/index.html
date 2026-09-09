@@ -105,6 +105,7 @@
   .nav nav a[href="#diff"]:hover,   .nav nav a.active[href="#diff"]   { color: var(--added);  border-bottom-color: var(--added); }
   .nav nav a[href="#themes"]:hover, .nav nav a.active[href="#themes"] { color: var(--yellow); border-bottom-color: var(--yellow); }
   .nav nav a[href="#pr"]:hover,     .nav nav a.active[href="#pr"]     { color: var(--thread); border-bottom-color: var(--thread); }
+  .nav nav a[href="#board"]:hover,  .nav nav a.active[href="#board"]  { color: var(--cyan);   border-bottom-color: var(--cyan); }
   .nav nav a[href="#ai"]:hover,     .nav nav a.active[href="#ai"]     { color: var(--purple); border-bottom-color: var(--purple); }
 
   /* ------- hero: title, demo, and install share the first viewport ------- */
@@ -256,7 +257,38 @@
   #diff    { --accent: var(--added); }
   #themes  { --accent: var(--yellow); }
   #pr      { --accent: var(--thread); }
+  #board   { --accent: var(--cyan); }
   #ai      { --accent: var(--purple); }
+
+  /* the review board overlay: drift centers a panel over the diff,
+     exactly as tall as its rows, on the panel background (ANSI 235)
+     with the same 238 cursor row the other overlays use */
+  .board-body { position: relative; }
+  .board {
+    position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(580px, 90%);
+    padding: 8px 0 6px; background: #262626; overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  }
+  .board .brow { display: flex; white-space: pre; padding: 0 14px; color: var(--fg); }
+  .board .brow.on { background: var(--select-bg); color: var(--fg-bright); font-weight: 600; }
+  .board .cap { color: var(--muted); padding: 0 14px 4px; }
+  .board .mk { color: var(--dir); }
+  .board .car { color: var(--muted); }
+  /* A terminal's columns never squeeze: on a narrow panel the row is
+     clipped at the edge, the way drift shortens a branch instead. */
+  .board .nm, .board .bn, .board .ct, .board .ag, .board .sub { flex: none; }
+  .board .nm { display: inline-block; width: 17ch; }
+  .board .bn { display: inline-block; width: 20ch; color: var(--dir); }
+  .board .ct { display: inline-block; width: 8ch; color: var(--muted); }
+  .board .ag { display: inline-block; width: 4ch; text-align: right; color: var(--muted); }
+  .board .work { color: var(--added); }
+  .board .idle { color: var(--muted); }
+  .board .sub { display: inline-block; width: 22ch; color: var(--fg); }
+  .board .dim { color: var(--muted); }
+  .board .rule { color: var(--muted); padding: 2px 14px; }
+  .board .act { color: var(--muted); padding: 0 14px; }
 
   /* theme switcher */
   .swatches { display: flex; gap: 10px; padding: 10px 14px 2px; }
@@ -378,6 +410,7 @@
       <a href="#diff">diff view</a>
       <a href="#themes">themes</a>
       <a href="#pr">pull requests</a>
+      <a href="#board">worktrees</a>
       <a href="#ai">agents</a>
       <a href="docs.html">docs</a>
       <a href="https://github.com/tothalex/drift">github</a>
@@ -547,7 +580,65 @@
     </div>
   </section>
 
-  <section class="feature flip screen" id="ai">
+  <section class="feature flip screen" id="board">
+    <div class="feature-body">
+    <div class="txt">
+      <p class="eyebrow">WORKTREES</p>
+      <h2>Every agent's branch on one board</h2>
+      <p>Run three agents in three worktrees and press <span class="k">b</span>:
+      every worktree of the repo, what it holds, how long ago it moved, and —
+      inside <a href="https://herdr.dev">herdr</a> — which agent is working in it.
+      Enter reviews one.</p>
+      <p><span class="dim">Press</span> <span class="k">b</span>
+      <span class="dim">again for the repo's</span> branches<span class="dim">,
+      each reviewable at its tip without a checkout.</span></p>
+    </div>
+    <div class="term">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="name">drift — the review board</span></div>
+      <div class="body board-body">
+        <!-- the review underneath: the board is a panel over it, not a
+             screen of its own -->
+        <div class="code" style="padding-left:14px">
+          <div class="row"><span class="g">23</span><span>  <span class="fn">receipt</span><span class="br">()</span><span class="pu">:</span> <span class="ty">string</span> <span class="br">{</span></span></div>
+          <div class="row"><span class="g">24</span><span>    <span class="kw">const</span> <span class="pr">lines</span><span class="pu">:</span> <span class="ty">string</span><span class="br">[]</span> <span class="op">=</span> <span class="br">[]</span><span class="pu">;</span></span></div>
+          <div class="row"><span class="g">25</span><span>    <span class="kw">const</span> <span class="pr">subtotal</span> <span class="op">=</span> <span class="ty">this</span><span class="pu">.</span><span class="fn">total</span><span class="br">()</span><span class="pu">;</span></span></div>
+          <div class="row del"><span class="g r">26</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Subtotal: …`</span><span class="br">)</span><span class="pu">;</span></span></div>
+          <div class="row add"><span class="g a">26</span><span>    <span class="pr">lines</span><span class="pu">.</span><span class="fn">push</span><span class="br">(</span><span class="st">`Subtotal (… items): …`</span><span class="br">)</span><span class="pu">;</span></span></div>
+          <div class="row"><span class="g">27</span><span>    <span class="kw">return</span> <span class="pr">lines</span><span class="pu">.</span><span class="fn">join</span><span class="br">(</span><span class="st">"\n"</span><span class="br">)</span><span class="pu">;</span></span></div>
+          <div class="row"><span class="g">28</span><span>  <span class="br">}</span></span></div>
+          <div class="row"><span class="g"> </span><span> </span></div>
+          <div class="row"><span class="g">30</span><span>  <span class="fn">total</span><span class="br">()</span><span class="pu">:</span> <span class="ty">number</span> <span class="br">{</span></span></div>
+          <div class="row"><span class="g">31</span><span>    <span class="kw">return</span> <span class="ty">this</span><span class="pu">.</span><span class="pr">items</span><span class="pu">.</span><span class="fn">reduce</span><span class="br">(</span><span class="pu">…</span><span class="br">)</span><span class="pu">;</span></span></div>
+          <div class="row"><span class="g">32</span><span>  <span class="br">}</span></span></div>
+          <div class="row"><span class="g">33</span><span><span class="br">}</span></span></div>
+          <div class="row"><span class="g"> </span><span> </span></div>
+          <div class="row"><span class="g">35</span><span><span class="kw">export</span> <span class="kw">function</span> <span class="fn">format</span><span class="br">(</span><span class="pr">cart</span><span class="pu">:</span> <span class="ty">Cart</span><span class="br">)</span> <span class="br">{</span></span></div>
+          <div class="row"><span class="g">36</span><span>  <span class="kw">return</span> <span class="pr">cart</span><span class="pu">.</span><span class="fn">receipt</span><span class="br">()</span><span class="pu">;</span></span></div>
+          <div class="row"><span class="g">37</span><span><span class="br">}</span></span></div>
+          <div class="row"><span class="g"> </span><span> </span></div>
+          <div class="row"><span class="g"> </span><span> </span></div>
+          <div class="row"><span class="g"> </span><span> </span></div>
+        </div>
+        <div class="board" aria-hidden="true">
+        <div class="cap">worktrees · b branches</div>
+        <div class="brow on"><span class="mk">● ▾ </span><span class="nm">sms-provider</span><span class="bn">…/sms-provider</span><span class="ct">+4 ~12</span><span class="ag">3m</span><span class="work">  ● claude</span><span class="dim"> working</span></div>
+        <div class="brow"><span>  </span><span class="mk">●</span><span>  </span><span class="sub">all changes</span></div>
+        <div class="brow"><span>  </span><span class="mk"> </span><span>  </span><span class="sub">uncommitted</span><span class="ct">12</span></div>
+        <div class="brow"><span>  </span><span class="mk"> </span><span>  </span><span class="sub">committed</span><span class="ct">4 commits</span></div>
+        <div class="brow"><span class="mk"> </span><span class="car">▸ </span><span class="nm">main</span><span class="bn">fix/voucher-nonce</span><span class="ct">+3</span><span class="ag">4d</span></div>
+        <div class="brow"><span class="mk"> </span><span class="car">▸ </span><span class="nm">prod-migration</span><span class="bn">…/migrator-gates</span><span class="ct">+14 ~3</span><span class="ag">1w</span><span class="idle">  ○ codex</span><span class="dim"> idle</span></div>
+        <div class="brow"><span class="mk"> </span><span class="car">▸ </span><span class="nm">portfolio-filter</span><span class="bn">…/assetcode-filter</span><span class="ct">+1</span><span class="ag">7d</span></div>
+        <div class="rule">──────────────────────────────────────────────────────────────────</div>
+        <div class="act">  compare against…</div>
+        <div class="act">  pull requests…</div>
+        </div>
+        <div class="sb"><span class="seg"> origin/main ← sms-provider </span><span>b board · ⏎ open · esc cancel</span></div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <section class="feature screen" id="ai">
     <div class="feature-body">
     <div class="txt">
       <p class="eyebrow">AI AGENTS</p>
@@ -647,8 +738,11 @@
     },
     { rootMargin: "-45% 0px -45% 0px" }
   );
-  ["diff", "themes", "pr", "ai"].forEach(function (id) {
-    var el = document.getElementById(id);
+  // Every in-page nav link is observed, so a section lights its link
+  // by virtue of being linked at all: a list kept by hand here goes
+  // stale the moment a section is added.
+  links.forEach(function (a) {
+    var el = document.getElementById(a.hash.slice(1));
     if (el) spy.observe(el);
   });
   // Back on the hero: no section is active.

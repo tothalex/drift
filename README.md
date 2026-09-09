@@ -132,12 +132,15 @@ base branch, kept live as you edit:
 - Press `e` to open the file in your editor at the cursor's line
   (neovim by default, configurable — see below); edits show up in the
   diff the moment you save.
-- Review scopes: press `b` (or click the branch name in the status bar)
-  to switch the base branch, then narrow the review to committed work
-  only (HEAD against the base), to uncommitted changes only (the working
-  copy against HEAD — what `git status` reports), or to one commit — or
-  keep everything at once. `B` skips the branch step and picks the scope
-  on the current base directly.
+- The review board: press `b` for every worktree — and every branch —
+  of the repo, with what each one holds, how long ago it moved, and
+  which agent is working in it. See
+  [The review board](#the-review-board).
+- Review scopes: narrow to committed work only (HEAD against the base),
+  to uncommitted changes only (the working copy against HEAD — what
+  `git status` reports), or to one commit — or keep everything at once.
+  `B` picks a scope on the current worktree without going through the
+  board.
 - All views are precomputed on background threads — navigation stays
   instant regardless of changeset size.
 
@@ -203,6 +206,44 @@ manifest and point out what only a human can fill in (chiefly
 `block_kinds`; `drift lang build` flags node kinds the grammar doesn't
 have). Note that grammars are native code compiled into a library
 drift loads — install only grammars you trust.
+
+## The review board
+
+Press `b` (or click the comparison in the status bar) for the board:
+every worktree of the repo on one list, most recently active first —
+what each one holds (`+2 ~1`: two commits, one file changed on top of
+them), how long ago it moved, and, when drift runs inside
+[herdr](https://herdr.dev), the agent working in it and whether it is
+busy.
+
+![the review board: worktrees, branches, and drilling into one](assets/board.gif)
+
+- **Two axes, one panel.** `b` again flips between the repo's
+  worktrees — live working copies, uncommitted work included — and its
+  branches, each reviewed at its tip whether or not anything has it
+  checked out. No checkout and no stash: a branch is read where drift
+  already sits, so only committed work is in scope. Each axis keeps its
+  own place, and `[board] first = "branches"` opens on that one.
+- **Drill in without leaving the panel.** `l` opens a row into its
+  scopes and commits and closes it again (`h` closes it from anywhere
+  inside); on a scope or commit line it selects, the same as Enter. So
+  "what is the agent in `receipt-lines` writing right now" is `l` on
+  the row, then `l` on its **uncommitted** line. Enter on a row you
+  have open closes it rather than walking away from it.
+- **It reopens where you left it** — the same rows open, the cursor on
+  the line you picked — so bouncing between two worktrees costs one key
+  each way.
+- **The agent column follows the session, not the pane.** A Claude
+  session that moved into a `.claude/worktrees/` checkout shows on that
+  worktree's row, not on the one its pane was started from. herdr only:
+  it is the one backend that reports the session id that makes the
+  difference knowable.
+- **Navigates like the panes.** `j`/`k` take counts (`5j`), `g`/`G`
+  jump to the first and last line (`12G` goes to line 12), and `/`
+  searches the rows on screen — live as you type, with `n`/`N` stepping
+  the matches.
+- Base branch and pull requests are actions at the foot of the same
+  board, so the whole "what am I reviewing?" question has one key.
 
 ## Pull requests
 
