@@ -37,6 +37,12 @@ pub struct Theme {
     pub search: Color,
     /// Floating panels: the `?` overlay, pickers, the comment composer.
     pub panel_bg: Color,
+    /// The clipped-text tooltip inside a floating panel — the review
+    /// board's. A step lighter than both the panel and the cursor row
+    /// it hangs under, or it reads as one more row; the file tree's
+    /// tooltip floats over the terminal's own ground, where `panel_bg`
+    /// is contrast enough.
+    pub tooltip_bg: Color,
     /// The VISUAL mode badge.
     pub visual_badge_fg: Color,
     pub visual_badge_bg: Color,
@@ -76,6 +82,7 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     ("thread", "110"),
     ("search", "179"),
     ("panel_bg", "235"),
+    ("tooltip_bg", "darkgray"),
     ("visual_badge_fg", "black"),
     ("visual_badge_bg", "yellow"),
     // Syntax defaults follow onedarkpro's `onedark_dark` palette.
@@ -215,6 +222,7 @@ impl Theme {
             thread: resolve("thread")?,
             search: resolve("search")?,
             panel_bg: resolve("panel_bg")?,
+            tooltip_bg: resolve("tooltip_bg")?,
             visual_badge_fg: resolve("visual_badge_fg")?,
             visual_badge_bg: resolve("visual_badge_bg")?,
             keyword: resolve("keyword")?,

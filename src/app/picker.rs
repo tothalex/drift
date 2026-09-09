@@ -164,8 +164,9 @@ impl BoardRow {
 
     /// The scopes an expanded row offers above its commits. A worktree
     /// has a working copy, so it can be sliced; a branch is committed
-    /// work already — picking the row itself is the whole of it, and
-    /// the only narrowing left is one commit.
+    /// work already, and its one scope is the whole of it — the same
+    /// line the row itself would have picked, so opening a row never
+    /// hides what Enter on it used to do.
     fn scopes(&self) -> &'static [(Scope, &'static str)] {
         match self.id {
             RowId::Worktree(_) => &[
@@ -173,7 +174,7 @@ impl BoardRow {
                 (Scope::Uncommitted, "uncommitted"),
                 (Scope::Committed, "committed"),
             ],
-            RowId::Branch(_) => &[],
+            RowId::Branch(_) => &[(Scope::Committed, "all commits")],
         }
     }
 }
@@ -428,18 +429,6 @@ impl WorktreeBoard {
         }
     }
 
-    /// Whether Enter closes the row under the cursor rather than
-    /// picking a line. An open row's Enter means "I am done with this
-    /// row" — walking away to review the whole worktree is not what
-    /// the key that opened it should do next. A closed row still picks,
-    /// so reviewing one stays a single Enter.
-    pub fn enter_folds(&self) -> bool {
-        matches!(
-            self.lines.get(self.cursor),
-            Some(BoardLine::Row(index)) if self.rows()[*index].expanded
-        )
-    }
-
     /// Snapshot the axis on screen for the next open, or for coming
     /// back to it after a look at the other one.
     pub fn remember(&self) -> AxisMemory {
@@ -642,6 +631,20 @@ pub fn ago(now: i64, then: i64) -> String {
     }
 }
 
+/// Fit a commit summary into `width`, clipping the tail: the subject
+/// line front-loads what the commit did, and the board's tooltip has
+/// the rest.
+pub fn fit_summary(label: &str, width: usize) -> String {
+    if label.chars().count() <= width {
+        return label.to_string();
+    }
+    label
+        .chars()
+        .take(width.saturating_sub(1))
+        .chain(['…'])
+        .collect()
+}
+
 /// Fit a branch name into `width`, dropping leading path segments
 /// first: `feature/FQBB-XX/sms-provider` reads as `…/sms-provider`,
 /// because the tail is what distinguishes one agent's branch from the
@@ -789,20 +792,22 @@ mod tests {
     }
 
     #[test]
-    fn enter_closes_an_open_row_instead_of_picking_it() {
-        let mut board = board(&["/a", "/b"], "/a");
-        // A closed row: Enter reviews it, one key as before.
-        assert!(!board.enter_folds());
-        board.worktrees[0].expanded = true;
+    fn a_branch_row_opens_onto_the_whole_branch() {
+        // Enter and `l` both fold a row, so the choice the row itself
+        // used to make has to be a line inside it — for a branch, the
+        // committed work in it.
+        let mut board = board_with(&["/a"], "/a", &["topic/b"]);
+        board.axis = BoardAxis::Branches;
+        board.open_on_current();
+        assert_eq!(board.descend(), Some(Descend::Fold(true)));
+        board.branches[0].expanded = true;
         board.reflow();
-        assert!(board.enter_folds());
-        // Its scopes still pick — they are the leaves.
         board.cursor += 1;
-        assert!(matches!(board.lines[board.cursor], BoardLine::Scope { .. }));
-        assert!(!board.enter_folds());
-        // So do the footer actions.
-        board.cursor = board.lines.len() - 1;
-        assert!(!board.enter_folds());
+        assert!(matches!(
+            &board.lines[board.cursor],
+            BoardLine::Scope { scope, .. } if *scope == Scope::Committed
+        ));
+        assert_eq!(board.descend(), Some(Descend::Choose));
     }
 
     #[test]
@@ -875,8 +880,9 @@ mod tests {
         assert!(board.rows()[0].current);
         assert!(!board.rows()[1].current);
 
-        // A branch is committed work already: the row itself is the
-        // whole changeset, so the only narrowing under it is a commit.
+        // A branch is committed work already: its one scope is the
+        // whole changeset, and the only narrowing under that is a
+        // single commit.
         board.expand(
             &RowId::Branch("release/2.0".to_string()),
             Some(vec![CommitInfo {
@@ -896,9 +902,10 @@ mod tests {
             .collect();
         assert_eq!(
             under,
-            vec![Scope::Commit(crate::vcs::model::RevisionId(
-                "f1".to_string()
-            ))]
+            vec![
+                Scope::Committed,
+                Scope::Commit(crate::vcs::model::RevisionId("f1".to_string()))
+            ]
         );
     }
 
@@ -999,6 +1006,17 @@ mod tests {
         assert_eq!(ago(now, now - 800 * 86400), "2y");
         // An unborn branch has no tip time and gets no age column.
         assert_eq!(ago(now, 0), "");
+    }
+
+    #[test]
+    fn fit_summary_clips_the_tail() {
+        assert_eq!(fit_summary("fix: a short one", 20), "fix: a short one");
+        assert_eq!(
+            fit_summary("fix: a rather long summary", 12),
+            "fix: a rath…"
+        );
+        // Zero width still yields the ellipsis, never a panic.
+        assert_eq!(fit_summary("anything", 0), "…");
     }
 
     #[test]

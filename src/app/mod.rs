@@ -29,7 +29,7 @@ use crossterm::event::{
 use ratatui::DefaultTerminal;
 use ratatui::layout::Position;
 
-use crate::config::Config;
+use crate::config::{Config, PickerSize};
 use crate::connect::{self, AgentTarget, SendContext};
 use crate::events::{
     AppEvent, INPUT_POLL_MS, RefreshedComments, pop_keyboard_enhancement,
@@ -140,6 +140,8 @@ pub struct App {
     pub theme: Theme,
     /// Nerd Font file icons in the tree (`icons = true` / `--icons`).
     pub icons: bool,
+    /// How much of the terminal a picker panel may cover (`[picker]`).
+    pub picker_size: PickerSize,
     pub files: Vec<ChangedFile>,
     pub nav: TreeNav,
     pub code: CodeView,
@@ -263,6 +265,7 @@ impl App {
             keymap: config.keymap,
             theme: config.theme,
             icons: config.icons,
+            picker_size: config.picker,
             files: Vec::new(),
             nav: TreeNav::new(&[]),
             code: CodeView::new(),
@@ -1091,12 +1094,15 @@ impl App {
             KeyCode::Char('n') => self.jump_picker_match(count, 1),
             KeyCode::Char('N') => self.jump_picker_match(count, -1),
             KeyCode::Enter => {
-                // On an open board row Enter closes it rather than
-                // picking: it is the key that opened what is under it.
+                // On the board Enter is `l`: a row folds either way,
+                // open or closed, because the key that opened a row is
+                // the one you reach for to close it — and what the row
+                // itself would have picked is the first line inside it.
+                // Everything that nests nothing still takes the line.
                 if let Some(Picker::Board(board)) = &self.picker
-                    && board.enter_folds()
+                    && let Some(Descend::Fold(expand)) = board.descend()
                 {
-                    self.toggle_board_row(false);
+                    self.toggle_board_row(expand);
                     return Ok(());
                 }
                 self.clear_picker_search();

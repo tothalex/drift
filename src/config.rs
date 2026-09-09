@@ -51,6 +51,9 @@ struct ConfigFile {
     /// The review board; see [`BoardSection`].
     #[serde(default)]
     board: BoardSection,
+    /// The picker overlays' size ceiling; see [`PickerSection`].
+    #[serde(default)]
+    picker: PickerSection,
     #[serde(default)]
     keys: HashMap<String, Vec<String>>,
     /// Flat color entries plus `[theme.<lang>]` per-language sub-tables,
@@ -167,6 +170,76 @@ impl BoardSection {
     }
 }
 
+/// The `[picker]` section: how much of the terminal a picker panel may
+/// cover.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PickerSection {
+    /// Percentages, as `"80%"` or `80`.
+    #[serde(default)]
+    width: Option<Percent>,
+    #[serde(default)]
+    height: Option<Percent>,
+}
+
+/// A percentage as written in the config: `"80%"`, `"80"` or `80`.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Percent {
+    Text(String),
+    Number(i64),
+}
+
+/// Ceilings on a picker panel, in percent of the terminal. Panels are
+/// sized by what they hold; these only say how far that may go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PickerSize {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl Default for PickerSize {
+    fn default() -> Self {
+        PickerSize {
+            width: 80,
+            height: 80,
+        }
+    }
+}
+
+impl PickerSection {
+    fn into_config(self) -> Result<PickerSize> {
+        let default = PickerSize::default();
+        Ok(PickerSize {
+            width: percent("picker.width", self.width, default.width)?,
+            height: percent("picker.height", self.height, default.height)?,
+        })
+    }
+}
+
+/// A percentage config value. Floored at a tenth of the terminal —
+/// below that no panel reads — and capped at all of it, there being
+/// nothing to float a panel over past the screen edge.
+fn percent(key: &str, value: Option<Percent>, default: u16) -> Result<u16> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    let raw = match &value {
+        Percent::Text(text) => text.trim().trim_end_matches('%').to_string(),
+        Percent::Number(number) => number.to_string(),
+    };
+    raw.parse::<u16>()
+        .ok()
+        .filter(|percent| (10..=100).contains(percent))
+        .ok_or_else(|| {
+            let shown = match &value {
+                Percent::Text(text) => format!("\"{text}\""),
+                Percent::Number(number) => number.to_string(),
+            };
+            anyhow!("{key} must be a percentage between \"10%\" and \"100%\"; not {shown}")
+        })
+}
+
 /// Per-language theme sections: language name → key → color string.
 type LangThemes = HashMap<String, HashMap<String, String>>;
 
@@ -209,6 +282,8 @@ pub struct Config {
     pub update: UpdateConfig,
     /// The review board's opening axis.
     pub board_first: BoardAxis,
+    /// How much of the terminal a picker panel may cover.
+    pub picker: PickerSize,
     pub keymap: Keymap,
     pub theme: Theme,
 }
@@ -268,6 +343,10 @@ fn load_at(path: &Path) -> Result<Config> {
         .board
         .into_config()
         .with_context(|| format!("invalid [board] in {}", path.display()))?;
+    let picker = file
+        .picker
+        .into_config()
+        .with_context(|| format!("invalid [picker] in {}", path.display()))?;
     Ok(Config {
         base: file.base,
         editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
@@ -277,6 +356,7 @@ fn load_at(path: &Path) -> Result<Config> {
         agent,
         update: file.update.into_config(),
         board_first,
+        picker,
         keymap,
         theme,
     })
@@ -379,7 +459,16 @@ pub fn default_toml() -> String {
          # anything has them checked out. b flips between the two; this\n\
          # is the one it opens on.\n\
          # [board]\n\
-         # first = \"worktrees\"     # or \"branches\"\n\n[keys]\n",
+         # first = \"worktrees\"     # or \"branches\"\n\n\
+         # The most of the terminal a picker panel may cover — the\n\
+         # review board and the lists it chains into (base branch,\n\
+         # pull requests, agent targets). Panels are sized by what\n\
+         # they hold; these are ceilings, so a wide terminal lets long\n\
+         # commit summaries and branch names show in full instead of\n\
+         # clipping to a tooltip.\n\
+         # [picker]\n\
+         # width = \"80%\"\n\
+         # height = \"80%\"\n\n[keys]\n",
     );
     for (name, _, keys) in KEY_DEFAULTS {
         let list = keys
@@ -442,6 +531,33 @@ mod tests {
         );
         let err = parse("[board]\nfirst = \"tags\"").unwrap_err().to_string();
         assert!(err.contains("worktrees") && err.contains("'tags'"), "{err}");
+    }
+
+    #[test]
+    fn picker_size_takes_percentages_either_way_written() {
+        let parse = |toml: &str| {
+            toml::from_str::<ConfigFile>(toml)
+                .unwrap()
+                .picker
+                .into_config()
+        };
+        assert_eq!(parse("").unwrap(), PickerSize::default());
+        assert_eq!(
+            parse("[picker]\nwidth = \"60%\"\nheight = 50").unwrap(),
+            PickerSize {
+                width: 60,
+                height: 50
+            }
+        );
+        // A panel cannot exceed the terminal, and a sliver of one is
+        // no use either.
+        let err = parse("[picker]\nwidth = \"120%\"").unwrap_err().to_string();
+        assert!(
+            err.contains("picker.width") && err.contains("120%"),
+            "{err}"
+        );
+        let err = parse("[picker]\nheight = 4").unwrap_err().to_string();
+        assert!(err.contains("picker.height") && err.contains('4'), "{err}");
     }
 
     #[test]
