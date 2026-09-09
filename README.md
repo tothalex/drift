@@ -224,12 +224,20 @@ busy.
   checked out. No checkout and no stash: a branch is read where drift
   already sits, so only committed work is in scope. Each axis keeps its
   own place, and `[board] first = "branches"` opens on that one.
-- **Drill in without leaving the panel.** `l` opens a row into its
-  scopes and commits and closes it again (`h` closes it from anywhere
-  inside); on a scope or commit line it selects, the same as Enter. So
-  "what is the agent in `receipt-lines` writing right now" is `l` on
-  the row, then `l` on its **uncommitted** line. Enter on a row you
-  have open closes it rather than walking away from it.
+- **Drill in without leaving the panel.** `l` — or Enter, which is the
+  same key here — opens a row into its scopes and commits and closes it
+  again (`h` closes it from anywhere inside); on a scope or commit line
+  it selects. So "what is the agent in `receipt-lines` writing right
+  now" is `l` on the row, then `l` on its **uncommitted** line, and
+  reviewing the whole of it is the **all changes** line at the top of
+  the row — **all commits**, on a branch, which is committed work
+  already.
+- **The columns fit what is in them.** Names and branches widen to
+  their longest entry, an expanded row widens the panel to fit the
+  commit summaries it holds — up to the share of the terminal
+  `[picker]` allows (80% by default). Anything still too long — a
+  runaway subject, a deeply nested branch — shows in full in a tooltip
+  under the cursor, the same answer the file tree gives a clipped name.
 - **It reopens where you left it** — the same rows open, the cursor on
   the line you picked — so bouncing between two worktrees costs one key
   each way.
@@ -412,6 +420,20 @@ string = "#b8bb26"
 [rust]
 bracket = "#fe8019"
 ```
+
+Picker panels — the review board and the lists it chains into — are
+sized by what they hold, up to a share of the terminal:
+
+```toml
+[picker]
+width = "80%"     # ceilings, not fixed sizes
+height = "80%"
+```
+
+Raise them and a wide terminal shows long branch names and commit
+summaries in full rather than clipping them to a tooltip; lower them to
+keep the panel off most of the screen. Percentages between 10% and
+100%, written `"80%"` or `80`.
 
 The editor is a top-level `editor = "…"` command; `{file}` and `{line}`
 are substituted, and the file path is appended when `{file}` is absent:

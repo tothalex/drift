@@ -196,6 +196,7 @@
     <a class="sub" href="#config-forge">[forge]</a>
     <a class="sub" href="#config-agent">[agent]</a>
     <a class="sub" href="#config-board">[board]</a>
+    <a class="sub" href="#config-picker">[picker]</a>
     <a class="sub" href="#config-update">[update]</a>
     <a href="#languages">Language plugins</a>
     <a href="#pull-requests">Pull requests</a>
@@ -270,7 +271,9 @@
       gutter) instead of clipping. Wrapping is display-only: motions,
       visual mode, yanks and send-to-agent operate on real lines. In the
       file tree, a name clipped by a narrow pane shows its full path in
-      a tooltip under the cursor.</p>
+      a tooltip under the cursor; the <a href="#keys">review board</a>
+      answers a clipped commit summary or branch name the same way, and
+      an expanded row widens the panel to fit the summaries it holds.</p>
     </section>
 
     <section id="keys">
@@ -306,7 +309,7 @@
         <tr><td>s</td><td>Send the line or selection to an <a href="#ai-agents">AI agent pane</a>.</td></tr>
         <tr><td>c</td><td>Copy the file path.</td></tr>
         <tr><td>e</td><td>Open the file in your editor at the cursor's line.</td></tr>
-        <tr><td>b</td><td>Open the review board: every worktree of the repo, newest first, with what each holds, how long ago it moved, and — inside herdr — the agent working in it. Press <code>b</code> again to flip to the repo's branches, each reviewable at its tip without a checkout. Enter reviews one — or closes it, when the row is already open; <code>l</code> opens a row into its scopes and commits, closes it again, and selects the scope under the cursor just as Enter does; <code>h</code> closes a row from anywhere inside. Reopens as you left it — the same rows open, the cursor on the line you picked. Base branch and pull requests are actions at its foot.</td></tr>
+        <tr><td>b</td><td>Open the review board: every worktree of the repo, newest first, with what each holds, how long ago it moved, and — inside herdr — the agent working in it. Press <code>b</code> again to flip to the repo's branches, each reviewable at its tip without a checkout. <code>l</code> and Enter are the same key on the board: on a row they open it into its scopes and commits and close it again, and on a scope or commit line they select it — so reviewing all of a row is its <code>all changes</code> line (<code>all commits</code> on a branch). <code>h</code> closes a row from anywhere inside. Reopens as you left it — the same rows open, the cursor on the line you picked. Base branch and pull requests are actions at its foot.</td></tr>
         <tr><td colspan="2" style="padding-left:2em"><b>Inside any picker</b> — the board and the lists it chains into — navigation is the same vocabulary as the panes: <kbd>j</kbd>/<kbd>k</kbd> with counts (<code>5j</code>), <kbd>g</kbd>/<kbd>G</kbd> for the first and last line (<code>12G</code> goes to line 12), <kbd>/</kbd> to search the rows on screen with <kbd>n</kbd>/<kbd>N</kbd> stepping matches, Enter to pick, Esc or <kbd>q</kbd> to close.</td></tr>
         <tr><td>B</td><td>Pick the review scope on the current worktree directly (everything, committed only, uncommitted only, one commit) — e.g. jump straight to a commit.</td></tr>
         <tr><td>r</td><td>Refresh.</td></tr>
@@ -425,6 +428,21 @@
         copy to read). <kbd>b</kbd> flips between them at any time and
         each keeps its own place; this setting only picks the one you
         start on.</p>
+      </section>
+
+      <section id="config-picker">
+        <h3><code>[picker]</code> — how much screen a panel may take</h3>
+        <pre><span class="tbl">[picker]</span>
+<span class="c"># width = "80%"        # ceilings, not fixed sizes</span>
+<span class="c"># height = "80%"</span></pre>
+        <p>The <a href="#keys">review board</a> and the lists it chains
+        into (base branch, pull requests, agent targets) are sized by
+        what they hold; these are the most of the terminal they may
+        cover. Raise them and a wide terminal shows long branch names
+        and commit summaries in full instead of clipping them to a
+        tooltip; lower them to keep a panel off most of the screen.
+        Percentages between 10% and 100%, written <code>"80%"</code> or
+        <code>80</code>.</p>
       </section>
 
       <section id="config-update">

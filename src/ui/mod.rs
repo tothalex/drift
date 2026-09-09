@@ -30,8 +30,9 @@ fn header_style(theme: &Theme, focused: bool) -> Style {
 }
 
 /// Draw a centered floating panel over the app: clear the area, paint
-/// the shared panel background. All overlays center identically.
-fn draw_panel(frame: &mut Frame, theme: &Theme, lines: Vec<Line<'static>>, width: u16) {
+/// the shared panel background. All overlays center identically. The
+/// rect it landed in comes back — the board hangs its tooltip off it.
+fn draw_panel(frame: &mut Frame, theme: &Theme, lines: Vec<Line<'static>>, width: u16) -> Rect {
     let area = frame.area();
     let width = width.min(area.width);
     let height = (lines.len() as u16 + 1).min(area.height);
@@ -46,6 +47,7 @@ fn draw_panel(frame: &mut Frame, theme: &Theme, lines: Vec<Line<'static>>, width
         Paragraph::new(lines).style(Style::default().bg(theme.panel_bg)),
         panel,
     );
+    panel
 }
 
 /// First case-insensitive occurrence of `query_lower` in `content`, as a
