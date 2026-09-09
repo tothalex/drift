@@ -36,6 +36,19 @@ pub enum AppEvent {
         seq: u64,
         result: Result<(Comparison, Vec<ChangedFile>), String>,
     },
+    /// The agent bridge answered for the review board — which panes
+    /// exist and where they are working. Stale sequences are discarded.
+    BoardAgentsReady {
+        seq: u64,
+        agents: Vec<crate::connect::AgentTarget>,
+    },
+    /// One worktree's counts finished scanning; rows fill in as these
+    /// land, so a slow worktree never holds up the board.
+    BoardStatsReady {
+        seq: u64,
+        row: crate::app::RowId,
+        stats: crate::vcs::model::WorktreeStats,
+    },
     /// The forge listed open pull requests; stale sequences are discarded.
     PrListReady {
         seq: u64,
@@ -156,7 +169,7 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 /// trees (a 90 GB `target/`). Per event, this thread pays one set
 /// insert; everything expensive happens once per flush, on the deduped
 /// batch.
-pub fn spawn_watcher_thread(tx: Sender<AppEvent>, root: PathBuf) {
+pub fn spawn_watcher_thread(tx: Sender<AppEvent>, root: PathBuf, alive: Arc<AtomicBool>) {
     thread::spawn(move || {
         // The watcher needs its own repository handle (for ignore rules);
         // gix handles aren't shared across threads.
@@ -215,6 +228,12 @@ pub fn spawn_watcher_thread(tx: Sender<AppEvent>, root: PathBuf) {
                     let paths = vcs.unignored(candidates);
                     if paths.is_empty() && !meta {
                         continue;
+                    }
+                    // Switching worktrees retires this watcher: its
+                    // root is no longer the one under review, so its
+                    // batches must not reach the app.
+                    if !alive.load(Ordering::Relaxed) {
+                        break;
                     }
                     if tx.send(AppEvent::FsChanged { paths, meta }).is_err() {
                         break;

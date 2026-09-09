@@ -6,9 +6,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
+use crate::app::BoardAxis;
 use crate::connect::{AgentConfig, Backend, TEMPLATE_DEFAULT};
 use crate::forge::ForgeConfig;
 use crate::keymap::{KEY_DEFAULTS, Keymap};
@@ -47,6 +48,9 @@ struct ConfigFile {
     /// The new-release launch check; see [`UpdateSection`].
     #[serde(default)]
     update: UpdateSection,
+    /// The review board; see [`BoardSection`].
+    #[serde(default)]
+    board: BoardSection,
     #[serde(default)]
     keys: HashMap<String, Vec<String>>,
     /// Flat color entries plus `[theme.<lang>]` per-language sub-tables,
@@ -142,6 +146,27 @@ impl UpdateSection {
     }
 }
 
+/// The `[board]` section: which list the review board opens on.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BoardSection {
+    /// "worktrees" | "branches" — the axis `b` shows first. `b` flips
+    /// between them either way; this only picks the one you start on.
+    #[serde(default)]
+    first: Option<String>,
+}
+
+impl BoardSection {
+    fn into_config(self) -> Result<BoardAxis> {
+        match self.first.as_deref() {
+            None => Ok(BoardAxis::default()),
+            Some(name) => BoardAxis::parse(name).ok_or_else(|| {
+                anyhow!("board.first must be \"worktrees\" or \"branches\"; not '{name}'")
+            }),
+        }
+    }
+}
+
 /// Per-language theme sections: language name → key → color string.
 type LangThemes = HashMap<String, HashMap<String, String>>;
 
@@ -182,6 +207,8 @@ pub struct Config {
     pub viewed_sync: bool,
     pub agent: AgentConfig,
     pub update: UpdateConfig,
+    /// The review board's opening axis.
+    pub board_first: BoardAxis,
     pub keymap: Keymap,
     pub theme: Theme,
 }
@@ -237,6 +264,10 @@ fn load_at(path: &Path) -> Result<Config> {
         .agent
         .into_config()
         .with_context(|| format!("invalid [agent] in {}", path.display()))?;
+    let board_first = file
+        .board
+        .into_config()
+        .with_context(|| format!("invalid [board] in {}", path.display()))?;
     Ok(Config {
         base: file.base,
         editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
@@ -245,6 +276,7 @@ fn load_at(path: &Path) -> Result<Config> {
         viewed_sync,
         agent,
         update: file.update.into_config(),
+        board_first,
         keymap,
         theme,
     })
@@ -340,7 +372,14 @@ pub fn default_toml() -> String {
          # Launch checks GitHub for a newer release (at most once a day)\n\
          # and mentions it in the status bar; `drift update` installs it.\n\
          # [update]\n\
-         # check = true\n\n[keys]\n",
+         # check = true\n\n\
+         # The review board (the b key) lists either the repo's\n\
+         # worktrees — live working copies, uncommitted work included —\n\
+         # or its branches, reviewed at their tip whether or not\n\
+         # anything has them checked out. b flips between the two; this\n\
+         # is the one it opens on.\n\
+         # [board]\n\
+         # first = \"worktrees\"     # or \"branches\"\n\n[keys]\n",
     );
     for (name, _, keys) in KEY_DEFAULTS {
         let list = keys
@@ -387,6 +426,23 @@ pub fn write_default() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn board_first_names_an_axis_or_errors() {
+        let parse = |toml: &str| {
+            toml::from_str::<ConfigFile>(toml)
+                .unwrap()
+                .board
+                .into_config()
+        };
+        assert_eq!(parse("").unwrap(), BoardAxis::Worktrees);
+        assert_eq!(
+            parse("[board]\nfirst = \"branches\"").unwrap(),
+            BoardAxis::Branches
+        );
+        let err = parse("[board]\nfirst = \"tags\"").unwrap_err().to_string();
+        assert!(err.contains("worktrees") && err.contains("'tags'"), "{err}");
+    }
 
     #[test]
     fn default_toml_round_trips() {

@@ -283,6 +283,8 @@ mod tests {
             name: name.to_string(),
             id: name.to_string(),
             status: "idle".to_string(),
+            cwd: std::path::PathBuf::new(),
+            session: None,
             place: Place::Elsewhere,
             where_label: where_label.to_string(),
         };

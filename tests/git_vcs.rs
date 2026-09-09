@@ -546,3 +546,111 @@ fn unignored_filters_gitignored_paths() {
         ]
     );
 }
+
+/// A branch reviewed off the board has no working copy of its own: its
+/// changeset ends at its tip, whatever is checked out beside drift.
+#[test]
+fn a_branch_is_reviewed_at_its_tip() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    let vcs = detect(dir).unwrap();
+    let cmp = vcs.comparison_at(Some("master"), "feature").unwrap();
+    assert_eq!(cmp.work_label, "feature");
+    // Committed, always — no working copy exists to hold anything else.
+    assert_eq!(cmp.scope, Scope::Committed);
+
+    let files = vcs.changed_files(&cmp).unwrap();
+    let names: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
+    // The fixture's uncommitted notes.txt edit and untracked file
+    // belong to the checkout, not to the branch.
+    assert_eq!(names, vec![Path::new("lib.rs"), Path::new("newname.txt")]);
+}
+
+/// The commits and diffs of a branch nothing has checked out.
+#[test]
+fn a_branch_review_walks_that_branchs_own_history() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    git(dir, &["checkout", "-q", "-b", "other", "master"]);
+    write(dir, "other.txt", "from other\n");
+    // Only this file: the fixture's dirty notes.txt would otherwise be
+    // carried onto the new branch and committed with it.
+    git(dir, &["add", "other.txt"]);
+    git(dir, &["commit", "-qm", "other work"]);
+    // Back to feature: `other` is now a branch with no working copy.
+    git(dir, &["checkout", "-q", "feature"]);
+
+    let vcs = detect(dir).unwrap();
+    let cmp = vcs.comparison_at(Some("master"), "other").unwrap();
+    let summaries: Vec<_> = vcs
+        .commits(&cmp)
+        .unwrap()
+        .into_iter()
+        .map(|commit| commit.summary)
+        .collect();
+    assert_eq!(summaries, vec!["other work".to_string()]);
+
+    let files = vcs.changed_files(&cmp).unwrap();
+    let names: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
+    assert_eq!(names, vec![Path::new("other.txt")]);
+    // The new side is the branch's tip, so the addition is visible even
+    // though no working copy holds this file.
+    let FileDiff::Text { hunks } = vcs.file_diff(&cmp, &files[0]).unwrap() else {
+        panic!("text diff expected");
+    };
+    let added: Vec<_> = hunks[0]
+        .lines
+        .iter()
+        .filter(|line| line.kind == LineKind::Added)
+        .map(|line| line.content.clone())
+        .collect();
+    assert_eq!(added, vec!["from other".to_string()]);
+}
+
+/// The board's `+N` counts work, not history: a branch already in the
+/// base is ahead by nothing, even though `commits` offers it recent
+/// history there for the scope picker's sake.
+#[test]
+fn a_merged_branch_counts_no_work() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    let vcs = detect(dir).unwrap();
+
+    // `master` is the base: its own tip is the merge base.
+    let base = vcs.comparison_at(Some("master"), "master").unwrap();
+    assert_eq!(vcs.work_tip(&base), Some(base.ancestor.clone()));
+    assert_eq!(
+        drift::vcs::branch_stats(dir, "master", "master")
+            .unwrap()
+            .commits,
+        0
+    );
+    // Recent history is still offered for picking a commit.
+    assert!(!vcs.commits(&base).unwrap().is_empty());
+
+    // A branch with work of its own counts it.
+    assert_eq!(
+        drift::vcs::branch_stats(dir, "master", "feature")
+            .unwrap()
+            .commits,
+        1
+    );
+}
+
+/// Branch rows are drawn before anything is counted, so the tips and
+/// ages come straight off the refs, newest first.
+#[test]
+fn branch_tips_are_listed_newest_first() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    let vcs = detect(dir).unwrap();
+    let branches = vcs.branch_tips().unwrap();
+    let names: Vec<_> = branches.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, vec!["feature".to_string(), "master".to_string()]);
+    assert!(branches[0].last_commit >= branches[1].last_commit);
+    // The plain name list the base picker uses is the same order.
+    assert_eq!(vcs.branches().unwrap(), names);
+    // A tip resolves to the same commit the comparison reviews.
+    let cmp = vcs.comparison_at(Some("master"), "feature").unwrap();
+    assert_eq!(cmp.work, Some(branches[0].tip.clone()));
+}

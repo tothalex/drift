@@ -4,11 +4,12 @@
 //! state already resolved — no process-name heuristics needed here.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use super::{AgentTarget, Bridge, Place, run_cli, short_path};
+use super::{AgentTarget, Bridge, Place, run_cli, session, short_path};
 
 /// herdr sets this in every pane — the "you are inside herdr" marker.
 pub(super) const INSIDE_ENV: &str = "HERDR_ENV";
@@ -54,6 +55,21 @@ impl Bridge for Herdr {
         )
     }
 
+    fn board_agents(&self) -> Result<Vec<AgentTarget>> {
+        // Resolution reads a file per agent, so it stays out of
+        // `targets`: that runs inline from the send key, this runs on
+        // the board's background thread.
+        let mut targets = self.targets()?;
+        for target in &mut targets {
+            if let Some(id) = &target.session
+                && let Some(cwd) = session::working_dir(&target.name, id)
+            {
+                target.cwd = cwd;
+            }
+        }
+        Ok(targets)
+    }
+
     fn send(&self, target_id: &str, text: &str, submit: bool) -> Result<()> {
         // `pane send-text` writes the text literally into the pane's
         // input (multi-line stays multi-line, nothing submitted); enter
@@ -91,6 +107,18 @@ struct HerdrAgent {
     workspace_id: String,
     #[serde(default)]
     cwd: String,
+    #[serde(default)]
+    agent_session: Option<HerdrSession>,
+}
+
+/// The agent's own session handle. Only an id is usable: a `kind` of
+/// anything else names a session drift cannot look up.
+#[derive(Deserialize)]
+struct HerdrSession {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    value: String,
 }
 
 /// `herdr tab list` reply: tabs with their display labels.
@@ -199,6 +227,11 @@ fn parse_agent_list(
                 name: agent.agent,
                 id: agent.pane_id,
                 status: agent.agent_status,
+                cwd: PathBuf::from(agent.cwd),
+                session: agent
+                    .agent_session
+                    .filter(|session| session.kind == "id" && !session.value.is_empty())
+                    .map(|session| session.value),
             }
         })
         .collect();
@@ -235,6 +268,24 @@ mod tests {
         assert_eq!(others[0].name, "codex");
 
         assert!(parse_agent_list("not json", &none, &none, &outside).is_err());
+    }
+
+    #[test]
+    fn only_a_session_id_is_kept_for_resolving_a_moved_agent() {
+        let json = r#"{"id":"cli:agent:list","result":{"agents":[
+            {"agent":"claude","cwd":"/repo","pane_id":"p1",
+             "agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"64ce4261"}},
+            {"agent":"claude","cwd":"/repo","pane_id":"p2",
+             "agent_session":{"agent":"claude","kind":"name","value":"scratch"}},
+            {"agent":"codex","cwd":"/repo","pane_id":"p3"}
+        ]}}"#;
+        let none = HashMap::new();
+        let targets = parse_agent_list(json, &none, &none, &herdr(None, None, None)).unwrap();
+        let sessions: Vec<Option<&str>> = targets
+            .iter()
+            .map(|target| target.session.as_deref())
+            .collect();
+        assert_eq!(sessions, [Some("64ce4261"), None, None]);
     }
 
     #[test]

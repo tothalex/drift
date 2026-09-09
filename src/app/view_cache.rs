@@ -89,6 +89,23 @@ impl ViewCache {
     }
 }
 
+/// The new-side content of a file under `cmp`: the source the diff's
+/// added lines belong to, which every view and the peek must agree on.
+/// `None` when there is none to read — a deleted file, or an object the
+/// repo doesn't have.
+pub fn new_side_source(file: &ChangedFile, vcs: &dyn Vcs, cmp: &Comparison) -> Option<String> {
+    match (&cmp.scope, &cmp.work) {
+        // The picked commit's own tree: the working copy may have moved
+        // on, and under a branch review it is someone else's entirely.
+        (Scope::Commit(rev), _) => vcs.file_at_revision(rev, &file.path),
+        // A branch reviewed off the board ends at its tip; HEAD belongs
+        // to whatever happens to be checked out beside it.
+        (_, Some(tip)) => vcs.file_at_revision(tip, &file.path),
+        (Scope::Committed, None) => vcs.file_at_head(&file.path),
+        _ => std::fs::read_to_string(vcs.root().join(&file.path)).ok(),
+    }
+}
+
 /// Compute one file's view — shared by the cache and the prefetch worker.
 pub fn compute(
     file: &ChangedFile,
@@ -100,16 +117,8 @@ pub fn compute(
     // Tabs render zero-width in the terminal; expand them everywhere the
     // processor looks so spans stay aligned with the displayed text.
     processor::tabs::expand_diff(&mut diff);
-    // New-side content; None (deleted/unreadable) → hunk fallback. Must
-    // match the diff's new side: the picked commit's tree under a commit
-    // scope (the working copy may have diverged), the working copy
-    // otherwise.
-    let source = match &cmp.scope {
-        Scope::Commit(rev) => vcs.file_at_revision(rev, &file.path),
-        Scope::Committed => vcs.file_at_head(&file.path),
-        _ => std::fs::read_to_string(vcs.root().join(&file.path)).ok(),
-    }
-    .map(processor::tabs::expand_tabs_owned);
+    // None (deleted/unreadable) → hunk fallback.
+    let source = new_side_source(file, vcs, cmp).map(processor::tabs::expand_tabs_owned);
     // Ancestor-side content is only needed to highlight removed lines;
     // skip the lookup when the diff has none.
     let old_source = if has_removed_lines(&diff) {
@@ -208,6 +217,7 @@ mod tests {
             ancestor: RevisionId("def456".to_string()),
             work_label: "feature".to_string(),
             scope: Scope::Commit(RevisionId("abc123".to_string())),
+            work: None,
         };
         let file = ChangedFile {
             status: FileStatus::Added,
