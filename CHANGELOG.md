@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - place board agents by the worktree their latest turn changed ([#33](https://github.com/tothalex/drift/pull/33))
 
+  The review board's agent column now follows what each session
+  changes, not where its pane was started:
+
+  - A session that stays in the main checkout but edits another
+    worktree by path (`cd <worktree> && …`, or writing files there)
+    shows on the worktree it is writing to. It used to show on the
+    checkout its pane sits in.
+  - Files a session wrote outrank checkouts its commands only mention,
+    such as a baseline it compares against.
+  - Several agents in one worktree are all counted: the row shows the
+    busiest one and then a count (`● claude working +1`). Before, a
+    working session could be hidden behind an idle one in the same
+    checkout.
+  - Subagents and workflow agents count toward the session that
+    launched them.
+
 ## [0.28.0](https://github.com/tothalex/drift/compare/v0.27.0...v0.28.0) - 2026-09-09
 
 ### Added
