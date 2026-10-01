@@ -62,9 +62,12 @@ impl Bridge for Herdr {
         let mut targets = self.targets()?;
         for target in &mut targets {
             if let Some(id) = &target.session
-                && let Some(cwd) = session::working_dir(&target.name, id)
+                && let Some(activity) = session::activity(&target.name, id)
             {
-                target.cwd = cwd;
+                if let Some(cwd) = activity.cwd {
+                    target.cwd = cwd;
+                }
+                target.turns = activity.turns;
             }
         }
         Ok(targets)
@@ -232,6 +235,7 @@ fn parse_agent_list(
                     .agent_session
                     .filter(|session| session.kind == "id" && !session.value.is_empty())
                     .map(|session| session.value),
+                turns: Vec::new(),
             }
         })
         .collect();

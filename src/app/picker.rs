@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::connect::{AgentTarget, SendContext};
+use crate::connect::{Action, AgentTarget, SendContext};
 use crate::forge::date_of;
 use crate::forge::model::PullRequest;
 use crate::vcs::model::{BranchInfo, CommitInfo, Scope, WorktreeInfo, WorktreeStats};
@@ -107,13 +107,13 @@ pub struct BoardRow {
     /// Commit time of the tip, for the age column.
     pub last_commit: i64,
     pub stats: Option<WorktreeStats>,
-    /// Agent name and status ("claude", "working") for an agent working
-    /// in this worktree — or, on the branch axis, in whichever worktree
-    /// has this branch checked out. herdr only; see
+    /// Name and status ("claude", "working") of each agent working in
+    /// this worktree, busiest first — or, on the branch axis, in
+    /// whichever worktree has this branch checked out. herdr only; see
     /// [`Bridge::board_agents`].
     ///
     /// [`Bridge::board_agents`]: crate::connect::Bridge::board_agents
-    pub agent: Option<(String, String)>,
+    pub agents: Vec<(String, String)>,
     /// The row drift is reviewing right now.
     pub current: bool,
     pub expanded: bool,
@@ -131,7 +131,7 @@ impl BoardRow {
             branch: info.branch,
             last_commit: info.last_commit,
             stats: None,
-            agent: None,
+            agents: Vec::new(),
             expanded: false,
             commits: Vec::new(),
         }
@@ -148,7 +148,7 @@ impl BoardRow {
             branch: None,
             last_commit: info.last_commit,
             stats: None,
-            agent: None,
+            agents: Vec::new(),
             expanded: false,
             commits: Vec::new(),
         }
@@ -384,38 +384,93 @@ impl WorktreeBoard {
         }
     }
 
-    /// Join agents onto rows by directory — the one the agent is
-    /// working in, which the bridge has already resolved. That is often
-    /// deeper than the worktree root, so the deepest matching root
-    /// wins: nested worktrees (`.claude/worktrees/` inside the
-    /// checkout) would otherwise all match the parent, and an agent
-    /// that moved into one would be credited to the branch it left.
+    /// Join agents onto rows by where they work. An agent's own record
+    /// decides first: the newest turn whose calls touched this board
+    /// places it on the worktrees it wrote files in; failing those, the
+    /// ones its commands mention by path; failing those, the ones its
+    /// commands ran in. So a session that never left the checkout it
+    /// started in, but edits another by path, is credited to the other —
+    /// and a command that only mentions a checkout (a baseline to diff
+    /// against, a stack to tear down) does not outweigh the files the
+    /// turn changed. Without a record, the agent's directory decides.
     ///
-    /// A branch row inherits the agent of the worktree that has it
-    /// checked out — the same agent, named on the other axis.
+    /// A path lands on the deepest worktree holding it: nested
+    /// worktrees (`.claude/worktrees/` inside the checkout) would
+    /// otherwise all match the parent.
+    ///
+    /// A row lists every agent on it, busiest first, so a working
+    /// session is never hidden behind an idle one in the same checkout.
+    /// A branch row inherits the agents of the worktree that has it
+    /// checked out — the same agents, named on the other axis.
     pub fn set_agents(&mut self, agents: &[AgentTarget]) {
+        for row in &mut self.worktrees {
+            row.agents.clear();
+        }
         for agent in agents {
-            if agent.cwd.as_os_str().is_empty() {
-                continue;
+            for index in self.places(agent) {
+                self.worktrees[index]
+                    .agents
+                    .push((agent.name.clone(), agent.status.clone()));
             }
-            let best = self
+        }
+        for row in &mut self.worktrees {
+            row.agents
+                .sort_by_key(|(_, status)| std::cmp::Reverse(busyness(status)));
+        }
+        for branch in &mut self.branches {
+            branch.agents = self
+                .worktrees
+                .iter()
+                .find(|row| row.branch.as_deref() == Some(branch.label.as_str()))
+                .map(|row| row.agents.clone())
+                .unwrap_or_default();
+        }
+    }
+
+    /// The worktree rows an agent works in; see [`Self::set_agents`].
+    fn places(&self, agent: &AgentTarget) -> Vec<usize> {
+        for turn in &agent.turns {
+            let wrote = self.rows_holding(turn.iter().filter_map(|action| match action {
+                Action::Wrote(path) => Some(path),
+                Action::Ran { .. } => None,
+            }));
+            let named = self.rows_holding(turn.iter().flat_map(|action| match action {
+                Action::Ran { paths, .. } => paths.as_slice(),
+                Action::Wrote(_) => &[],
+            }));
+            let ran = self.rows_holding(turn.iter().filter_map(|action| match action {
+                Action::Ran { dir, .. } => dir.as_ref(),
+                Action::Wrote(_) => None,
+            }));
+            if let Some(rows) = [wrote, named, ran]
+                .into_iter()
+                .find(|rows| !rows.is_empty())
+            {
+                return rows;
+            }
+        }
+        self.rows_holding([&agent.cwd])
+    }
+
+    /// The worktree rows holding any of `paths`, each once, in the order
+    /// first met.
+    fn rows_holding<'a>(&self, paths: impl IntoIterator<Item = &'a PathBuf>) -> Vec<usize> {
+        let mut rows = Vec::new();
+        for path in paths {
+            let deepest = self
                 .worktrees
                 .iter()
                 .enumerate()
                 .filter_map(|(index, row)| Some((index, row.path()?)))
-                .filter(|(_, path)| agent.cwd.starts_with(path))
-                .max_by_key(|(_, path)| path.components().count());
-            if let Some((index, _)) = best {
-                self.worktrees[index].agent = Some((agent.name.clone(), agent.status.clone()));
+                .filter(|(_, root)| path.starts_with(root))
+                .max_by_key(|(_, root)| root.components().count());
+            if let Some((index, _)) = deepest
+                && !rows.contains(&index)
+            {
+                rows.push(index);
             }
         }
-        for branch in &mut self.branches {
-            branch.agent = self
-                .worktrees
-                .iter()
-                .find(|row| row.branch.as_deref() == Some(branch.label.as_str()))
-                .and_then(|row| row.agent.clone());
-        }
+        rows
     }
 
     /// What `l` should do where the cursor is. `None` on the footer
@@ -667,6 +722,17 @@ pub fn fit_branch(branch: &str, width: usize) -> String {
     format!("…{tail}")
 }
 
+/// How much a status says about an agent being in motion, for picking
+/// the order of a row's agents — the first is the one it shows.
+fn busyness(status: &str) -> u8 {
+    match status {
+        "working" => 3,
+        "blocked" => 2,
+        "" => 0,
+        _ => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,9 +788,45 @@ mod tests {
             status: "working".to_string(),
             cwd: PathBuf::from(cwd),
             session: None,
+            turns: Vec::new(),
             place: Place::Elsewhere,
             where_label: String::new(),
         }
+    }
+
+    /// An agent standing in `cwd` whose record holds `turns`, newest
+    /// first.
+    fn agent_with(cwd: &str, turns: Vec<Vec<Action>>) -> AgentTarget {
+        AgentTarget {
+            turns,
+            ..agent(cwd)
+        }
+    }
+
+    fn wrote(path: &str) -> Action {
+        Action::Wrote(PathBuf::from(path))
+    }
+
+    /// A command mentioning `paths`, run in `dir`.
+    fn ran(paths: &[&str], dir: &str) -> Action {
+        Action::Ran {
+            paths: paths.iter().map(PathBuf::from).collect(),
+            dir: Some(PathBuf::from(dir)),
+        }
+    }
+
+    /// Which rows show an agent at all.
+    fn agent_rows(board: &WorktreeBoard) -> Vec<&str> {
+        board
+            .rows()
+            .iter()
+            .filter(|row| !row.agents.is_empty())
+            .map(|row| row.label.as_str())
+            .collect()
+    }
+
+    fn working() -> (String, String) {
+        ("claude".to_string(), "working".to_string())
     }
 
     #[test]
@@ -743,11 +845,117 @@ mod tests {
         // also a prefix match on the parent.
         let mut board = board(&["/repo", "/repo/.claude/worktrees/a"], "/repo");
         board.set_agents(&[agent("/repo/.claude/worktrees/a/src")]);
-        assert_eq!(board.rows()[0].agent, None);
-        assert_eq!(
-            board.rows()[1].agent,
-            Some(("claude".to_string(), "working".to_string()))
-        );
+        assert!(board.rows()[0].agents.is_empty());
+        assert_eq!(board.rows()[1].agents, vec![working()]);
+    }
+
+    #[test]
+    fn every_agent_in_a_checkout_is_listed_busiest_first() {
+        // Two sessions in one checkout, in either order: the row shows
+        // the one that is moving, and still counts the other.
+        let idle = AgentTarget {
+            status: "idle".to_string(),
+            ..agent("/repo")
+        };
+        let idle_row = ("claude".to_string(), "idle".to_string());
+        for agents in [
+            [agent("/repo"), idle.clone()],
+            [idle.clone(), agent("/repo")],
+        ] {
+            let mut board = board(&["/repo"], "/repo");
+            board.set_agents(&agents);
+            assert_eq!(board.rows()[0].agents, vec![working(), idle_row.clone()]);
+        }
+    }
+
+    #[test]
+    fn an_agent_is_placed_by_what_it_changes_not_where_it_stands() {
+        // The session never left the main checkout; every call reaches
+        // into the other one by path.
+        let mut board = board(&["/repo", "/wt"], "/repo");
+        board.set_agents(&[agent_with(
+            "/repo",
+            vec![vec![
+                ran(&["/wt", "/wt/src/a.rs"], "/wt"),
+                wrote("/wt/b.rs"),
+            ]],
+        )]);
+        assert_eq!(agent_rows(&board), vec!["wt"]);
+    }
+
+    #[test]
+    fn files_written_outrank_checkouts_a_command_only_mentions() {
+        // The e2e shape: the turn edits `wt`, and its commands also name
+        // `base` — the baseline it compares against, torn down after.
+        let mut board = board(&["/repo", "/wt", "/base"], "/repo");
+        board.set_agents(&[agent_with(
+            "/repo",
+            vec![vec![
+                ran(&["/base"], "/base"),
+                ran(&["/wt", "/base/run.sh"], "/wt"),
+                wrote("/wt/a.rs"),
+            ]],
+        )]);
+        assert_eq!(agent_rows(&board), vec!["wt"]);
+    }
+
+    #[test]
+    fn a_mentioned_checkout_outranks_one_a_command_merely_ran_in() {
+        // Edits made through the shell (`sed -i` by path) still place
+        // the agent; a bare command polling a log where the session
+        // stands does not.
+        let mut board = board(&["/repo", "/wt"], "/repo");
+        board.set_agents(&[agent_with(
+            "/repo",
+            vec![vec![
+                ran(&["/tmp/task.log"], "/repo"),
+                ran(&["/wt/a.rs"], "/repo"),
+            ]],
+        )]);
+        assert_eq!(agent_rows(&board), vec!["wt"]);
+    }
+
+    #[test]
+    fn commands_that_name_no_worktree_place_the_agent_where_they_ran() {
+        let mut board = board(&["/repo", "/wt"], "/repo");
+        board.set_agents(&[agent_with(
+            "/wt",
+            vec![vec![ran(&[], "/repo"), ran(&["/tmp/x"], "/repo/src")]],
+        )]);
+        assert_eq!(agent_rows(&board), vec!["repo"]);
+    }
+
+    #[test]
+    fn the_newest_turn_that_touched_the_board_decides() {
+        // This turn only wrote scratch files; the last real work was in
+        // `wt`, and a turn before that in `repo` no longer counts.
+        let mut board = board(&["/repo", "/wt"], "/repo");
+        board.set_agents(&[agent_with(
+            "/repo",
+            vec![
+                vec![wrote("/tmp/notes.md")],
+                vec![wrote("/wt/a.rs")],
+                vec![wrote("/repo/a.rs")],
+            ],
+        )]);
+        assert_eq!(agent_rows(&board), vec!["wt"]);
+    }
+
+    #[test]
+    fn an_agent_working_in_two_worktrees_shows_on_both() {
+        let mut board = board(&["/repo", "/wt", "/other"], "/repo");
+        board.set_agents(&[agent_with(
+            "/repo",
+            vec![vec![wrote("/wt/a.rs"), wrote("/other/b.rs")]],
+        )]);
+        assert_eq!(agent_rows(&board), vec!["wt", "other"]);
+    }
+
+    #[test]
+    fn a_record_that_never_touched_the_board_falls_back_to_the_directory() {
+        let mut board = board(&["/repo", "/wt"], "/repo");
+        board.set_agents(&[agent_with("/wt", vec![vec![wrote("/tmp/x")]])]);
+        assert_eq!(agent_rows(&board), vec!["wt"]);
     }
 
     #[test]
@@ -757,7 +965,7 @@ mod tests {
         // not pile onto the first row.
         let mut board = board(&["/repo"], "/repo");
         board.set_agents(&[agent("")]);
-        assert_eq!(board.rows()[0].agent, None);
+        assert!(board.rows()[0].agents.is_empty());
     }
 
     #[test]
@@ -915,13 +1123,10 @@ mod tests {
         // to know which worktree has a branch to see it is busy.
         let mut board = board_with(&["/a", "/b"], "/a", &["topic/a", "topic/b", "idle-branch"]);
         board.set_agents(&[agent("/b/src")]);
-        assert_eq!(board.worktrees[0].agent, None);
-        assert_eq!(
-            board.branches[1].agent,
-            Some(("claude".to_string(), "working".to_string()))
-        );
-        assert_eq!(board.branches[0].agent, None);
-        assert_eq!(board.branches[2].agent, None);
+        assert!(board.worktrees[0].agents.is_empty());
+        assert_eq!(board.branches[1].agents, vec![working()]);
+        assert!(board.branches[0].agents.is_empty());
+        assert!(board.branches[2].agents.is_empty());
     }
 
     #[test]
