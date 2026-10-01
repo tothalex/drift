@@ -21,6 +21,8 @@ use std::path::PathBuf;
 
 use anyhow::{Result, anyhow, bail};
 
+pub use session::Action;
+
 /// Process names that mark a pane as an agent, for the backends that
 /// have to recognize one from the process it runs. Matched against a
 /// process basename.
@@ -228,11 +230,13 @@ pub trait Bridge {
     /// Agent panes a prompt can go to, excluding drift's own pane,
     /// closest first (same tab, same workspace, elsewhere).
     fn targets(&self) -> Result<Vec<AgentTarget>>;
-    /// Agents for the review board's column, each `cwd` resolved to the
-    /// directory the agent is working in rather than the one its pane
-    /// sits in. Empty by default: only herdr reports the session ids
-    /// that make the difference resolvable, and a column that credits
-    /// an agent to the wrong branch is worse than no column at all.
+    /// Agents for the review board's column, each with what its own
+    /// record says about where it works: `cwd` resolved to the
+    /// session's directory rather than the pane's, and `turns` filled
+    /// with the calls it made. Empty by default: only herdr reports the
+    /// session ids that make the difference resolvable, and a column
+    /// that credits an agent to the wrong branch is worse than no
+    /// column at all.
     fn board_agents(&self) -> Result<Vec<AgentTarget>> {
         Ok(Vec::new())
     }
@@ -267,8 +271,13 @@ pub struct AgentTarget {
     /// the agent simply doesn't appear on a row.
     pub cwd: PathBuf,
     /// The agent's session id, for the backends that track one — what
-    /// [`session::working_dir`] needs to find where the agent moved.
+    /// [`session::activity`] needs to find where the agent works.
     pub session: Option<String>,
+    /// The session's file-changing calls, a turn per prompt, newest
+    /// first: the board places an agent by the checkouts these name
+    /// before falling back to `cwd`. Empty unless
+    /// [`Bridge::board_agents`] read the session's record.
+    pub turns: Vec<Vec<Action>>,
     pub place: Place,
     /// Where the target is, in human terms: "this tab", the workspace
     /// and tab names ("drift:2"), or the agent's directory.
@@ -399,6 +408,7 @@ mod tests {
             status: String::new(),
             cwd: PathBuf::new(),
             session: None,
+            turns: Vec::new(),
             place: Place::SameTab,
             where_label: "this tab".to_string(),
         };

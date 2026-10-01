@@ -172,6 +172,7 @@ fn resolve_targets(tree: &str, top: &str, processes: &str, own: &Cmux) -> Result
                     // its agents never land on a board row.
                     cwd: PathBuf::new(),
                     session: None,
+                    turns: Vec::new(),
                     place,
                     where_label,
                 });

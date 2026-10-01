@@ -20,12 +20,13 @@ use crate::ui::draw_panel;
 const NAME_WIDTH: usize = 22;
 const BRANCH_WIDTH: usize = 26;
 /// The columns that never move: the marker and caret (" ● ▸ "), the
-/// counts, the age, and the room an agent's name and status take. Each
-/// is rendered with a trailing space but the last.
+/// counts, the age, and the room an agent's name and status take, with
+/// a "+1" for the others sharing its row. Each is rendered with a
+/// trailing space but the last.
 const MARKER_WIDTH: usize = 5;
 const STATS_WIDTH: usize = 11;
 const AGE_WIDTH: usize = 4;
-const AGENT_WIDTH: usize = 17;
+const AGENT_WIDTH: usize = 20;
 /// An expanded row's own columns: the indent its scopes and commits
 /// hang under, and the count that follows their label ("999 commits").
 const SCOPE_INDENT: usize = 7;
@@ -445,7 +446,7 @@ fn row_spans(
             Style::default().fg(theme.muted),
         ),
     ];
-    if let Some((name, status)) = &row.agent {
+    if let Some((name, status)) = row.agents.first() {
         // Only a working agent gets the filled dot: the point of the
         // column is spotting the one that is moving right now.
         let (dot, color) = match status.as_str() {
@@ -460,6 +461,12 @@ fn row_spans(
         if !status.is_empty() {
             spans.push(Span::styled(
                 format!(" {status}"),
+                Style::default().fg(theme.muted),
+            ));
+        }
+        if row.agents.len() > 1 {
+            spans.push(Span::styled(
+                format!(" +{}", row.agents.len() - 1),
                 Style::default().fg(theme.muted),
             ));
         }

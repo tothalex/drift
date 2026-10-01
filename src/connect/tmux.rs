@@ -158,6 +158,7 @@ fn resolve_targets(panes: &str, processes: &str, own_pane: Option<&str>) -> Vec<
                 // tmux tracks no session id, so a moved agent cannot
                 // be resolved — hence no board column for it.
                 session: None,
+                turns: Vec::new(),
                 place,
                 where_label,
             })

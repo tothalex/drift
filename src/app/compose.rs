@@ -285,6 +285,7 @@ mod tests {
             status: "idle".to_string(),
             cwd: std::path::PathBuf::new(),
             session: None,
+            turns: Vec::new(),
             place: Place::Elsewhere,
             where_label: where_label.to_string(),
         };

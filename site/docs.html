@@ -572,10 +572,15 @@
       its <code>socketControlMode</code> setting.</p>
       <p>The <a href="#keys">review board</a>'s agent column is herdr-only
       for the same reason: herdr reports each agent's session id, so drift
-      can follow a session that moved into a worktree of its own
-      (<code>.claude/worktrees/…</code>) and put it on that row. A pane's
-      own directory never moves with it, so the other backends would
-      credit the work to the checkout the agent was launched from.</p>
+      can read the session's own record and put the agent on the worktree
+      its latest turn changed — whether it moved into a worktree of its
+      own (<code>.claude/worktrees/…</code>) or never left the main
+      checkout and edits another by path. Subagents and workflow agents
+      count toward the session that launched them, and several agents in
+      one worktree show as the busiest plus a count
+      (<code>● claude working +1</code>). A pane's own directory never
+      moves with its agent, so the other backends would credit the work
+      to the checkout the agent was launched from.</p>
       <ul>
         <li>An agent split in drift's own tab is picked automatically —
         the drift-beside-claude layout never shows a picker.</li>

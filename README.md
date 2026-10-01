@@ -241,11 +241,15 @@ busy.
 - **It reopens where you left it** — the same rows open, the cursor on
   the line you picked — so bouncing between two worktrees costs one key
   each way.
-- **The agent column follows the session, not the pane.** A Claude
-  session that moved into a `.claude/worktrees/` checkout shows on that
-  worktree's row, not on the one its pane was started from. herdr only:
-  it is the one backend that reports the session id that makes the
-  difference knowable.
+- **The agent column follows the work, not the pane.** An agent shows
+  on the worktree its latest turn changed: a Claude session that moved
+  into a `.claude/worktrees/` checkout, or one that never left the main
+  checkout but edits another by path, shows on the row it is writing
+  to — not on the one its pane was started from. Subagents and workflow
+  agents count toward the session that launched them, and several
+  agents in one worktree show as the busiest plus a count
+  (`● claude working +1`). herdr only: it is the one backend that
+  reports the session id that makes the difference knowable.
 - **Navigates like the panes.** `j`/`k` take counts (`5j`), `g`/`G`
   jump to the first and last line (`12G` goes to line 12), and `/`
   searches the rows on screen — live as you type, with `n`/`N` stepping
