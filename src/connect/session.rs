@@ -297,7 +297,9 @@ fn command_action(command: &str, cwd: &Path, home: Option<&Path>) -> Action {
     let paths = command
         .split(|c: char| c.is_whitespace() || PATH_BREAKS.contains(&c))
         .map(|word| expand(word, home))
-        .filter(|path| path.is_absolute())
+        // Rooted, not absolute: on Windows an absolute path also needs
+        // a drive, which a POSIX shell's paths never carry.
+        .filter(|path| path.has_root())
         .collect();
     let dir = match leading_cd(command) {
         Some(dir) => Some(cwd.join(expand(dir, home))),
