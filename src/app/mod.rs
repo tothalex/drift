@@ -1452,36 +1452,44 @@ impl App {
         self.review = self.checks_by_target.remove(&next).unwrap_or_default();
     }
 
-    /// Review a different worktree: swap the provider, restart the file
-    /// watcher on the new root, and park the review checks under the
-    /// old root so coming back restores them.
+    /// Review a worktree's working copy: swap the provider, restart the
+    /// file watcher on the new root, and park the review checks under
+    /// the old target so coming back restores them. The worktree drift
+    /// already has open needs a fresh comparison too while a branch
+    /// review is on screen — that one reads the branch's tip, not HEAD.
     fn switch_worktree(&mut self, path: &Path, scope: Option<Scope>) -> Result<()> {
-        if *path != self.canonical_root() {
-            let vcs = match vcs::detect(path) {
-                Ok(vcs) => vcs,
-                Err(err) => {
-                    self.notice = Some(format!("cannot open {}: {err}", path.display()));
-                    return Ok(());
-                }
+        let target = RowId::Worktree(path.to_path_buf());
+        if self.review_target() != target {
+            let vcs = match *path != self.canonical_root() {
+                true => match vcs::detect(path) {
+                    Ok(vcs) => Some(vcs),
+                    Err(err) => {
+                        self.notice = Some(format!("cannot open {}: {err}", path.display()));
+                        return Ok(());
+                    }
+                },
+                false => None,
             };
+            let reader = vcs.as_deref().unwrap_or(&*self.vcs);
             // The base may not exist in the new worktree (a different
             // remote, a pruned branch); fall back to its own default
             // rather than refusing to switch.
-            let cmp = match vcs.comparison(Some(&self.cmp.base_label)) {
+            let cmp = match reader.comparison(Some(&self.cmp.base_label)) {
                 Ok(cmp) => cmp,
-                Err(_) => vcs.comparison(None)?,
+                Err(_) => reader.comparison(None)?,
             };
-            self.take_checks(RowId::Worktree(path.to_path_buf()));
+            self.take_checks(target);
 
-            self.watcher_alive.store(false, Ordering::Relaxed);
-            self.watcher_alive = Arc::new(AtomicBool::new(true));
-            spawn_watcher_thread(
-                self.events_tx.clone(),
-                path.to_path_buf(),
-                Arc::clone(&self.watcher_alive),
-            );
-
-            self.vcs = vcs;
+            if let Some(vcs) = vcs {
+                self.watcher_alive.store(false, Ordering::Relaxed);
+                self.watcher_alive = Arc::new(AtomicBool::new(true));
+                spawn_watcher_thread(
+                    self.events_tx.clone(),
+                    path.to_path_buf(),
+                    Arc::clone(&self.watcher_alive),
+                );
+                self.vcs = vcs;
+            }
             self.cmp = cmp;
             self.generation += 1;
         }
@@ -3284,6 +3292,84 @@ fn editor_command(template: &str, path: &Path, line: u32) -> Option<std::process
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A worktree on `main` whose repo also has a `feature` branch: the
+    /// live comparison reads HEAD, a branch comparison that branch's tip.
+    struct TwoBranchVcs;
+    impl Vcs for TwoBranchVcs {
+        fn root(&self) -> &Path {
+            Path::new("/repo")
+        }
+        fn comparison(&self, base: Option<&str>) -> Result<Comparison, vcs::VcsError> {
+            Ok(Comparison {
+                base_label: base.unwrap_or("origin/main").to_string(),
+                ancestor: RevisionId("ancestor".to_string()),
+                work_label: "main".to_string(),
+                scope: Scope::default(),
+                work: None,
+            })
+        }
+        fn comparison_at(
+            &self,
+            base: Option<&str>,
+            work: &str,
+        ) -> Result<Comparison, vcs::VcsError> {
+            Ok(Comparison {
+                work_label: work.to_string(),
+                work: Some(RevisionId(format!("{work}-tip"))),
+                ..self.comparison(base)?
+            })
+        }
+        fn changed_files(&self, _cmp: &Comparison) -> Result<Vec<ChangedFile>, vcs::VcsError> {
+            Ok(Vec::new())
+        }
+        fn file_diff(
+            &self,
+            _cmp: &Comparison,
+            _file: &ChangedFile,
+        ) -> Result<FileDiff, vcs::VcsError> {
+            unimplemented!()
+        }
+        fn file_at_ancestor(&self, _cmp: &Comparison, _file: &ChangedFile) -> Option<String> {
+            None
+        }
+        fn commits(&self, _cmp: &Comparison) -> Result<Vec<CommitInfo>, vcs::VcsError> {
+            Ok(Vec::new())
+        }
+        fn unignored(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+            paths
+        }
+    }
+
+    fn two_branch_app() -> App {
+        let config = crate::config::load_at(Path::new("/nonexistent/config.toml")).unwrap();
+        App::new(Box::new(TwoBranchVcs), None, config).unwrap()
+    }
+
+    #[test]
+    fn picking_the_open_worktree_leaves_a_branch_review() {
+        let mut app = two_branch_app();
+        app.review_branch("feature", None).unwrap();
+        assert_eq!(app.cmp.work_label, "feature");
+
+        let root = app.canonical_root();
+        app.switch_worktree(&root, Some(Scope::Committed)).unwrap();
+        assert_eq!(app.cmp.work, None);
+        assert_eq!(app.cmp.work_label, "main");
+        assert_eq!(app.cmp.scope, Scope::Committed);
+    }
+
+    #[test]
+    fn picking_the_open_worktree_keeps_its_review_checks_apart() {
+        let mut app = two_branch_app();
+        app.review.toggle(Path::new("src/live.rs"));
+        app.review_branch("feature", None).unwrap();
+        assert!(!app.review.contains(Path::new("src/live.rs")));
+
+        let root = app.canonical_root();
+        app.switch_worktree(&root, None).unwrap();
+        assert!(app.review.contains(Path::new("src/live.rs")));
+    }
 
     fn parts(command: &std::process::Command) -> (String, Vec<String>) {
         (
