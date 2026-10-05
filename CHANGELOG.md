@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/tothalex/drift/compare/v0.29.0...v0.30.0) - 2026-10-05
+
+### Added
+
+- show the commit message when reviewing a single commit ([#35](https://github.com/tothalex/drift/pull/35))
+
 ## [0.29.0](https://github.com/tothalex/drift/compare/v0.28.0...v0.29.0) - 2026-10-01
 
 ### Fixed
