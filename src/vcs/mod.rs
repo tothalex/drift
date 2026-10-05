@@ -8,8 +8,8 @@ pub mod unidiff;
 use std::path::{Path, PathBuf};
 
 use model::{
-    BranchInfo, ChangedFile, CommitInfo, Comparison, FileDiff, RevisionId, Scope, WorktreeInfo,
-    WorktreeStats,
+    BranchInfo, ChangedFile, CommitDetail, CommitInfo, Comparison, FileDiff, RevisionId, Scope,
+    WorktreeInfo, WorktreeStats,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -102,6 +102,13 @@ pub trait Vcs {
     /// recent history, capped. Feeds the scope picker; the comparison's
     /// own scope is ignored.
     fn commits(&self, cmp: &Comparison) -> Result<Vec<CommitInfo>, VcsError>;
+
+    /// One commit's author, date, and full message, for the message
+    /// entry atop a single-commit review. Best-effort: `None` when the
+    /// commit can't be read, and the review then shows no such entry.
+    fn commit_detail(&self, _rev: &RevisionId) -> Option<CommitDetail> {
+        None
+    }
 
     /// The tip of the work side, when the provider can name it. The
     /// board's counts need it to tell "no work" from "the whole

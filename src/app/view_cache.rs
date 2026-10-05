@@ -113,6 +113,9 @@ pub fn compute(
     cmp: &Comparison,
     options: ViewOptions,
 ) -> Result<FileView> {
+    if super::commit::is_entry(file) && matches!(cmp.scope, Scope::Commit(_)) {
+        return Ok(super::commit::compute(vcs, cmp));
+    }
     let mut diff = vcs.file_diff(cmp, file)?;
     // Tabs render zero-width in the terminal; expand them everywhere the
     // processor looks so spans stay aligned with the displayed text.

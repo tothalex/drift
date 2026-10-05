@@ -65,6 +65,26 @@ pub struct CommitInfo {
     pub summary: String,
 }
 
+/// One commit in full, for the message shown atop a single-commit
+/// review.
+#[derive(Debug, Clone)]
+pub struct CommitDetail {
+    /// Abbreviated id for display.
+    pub short_id: String,
+    pub author: String,
+    /// Author date as the VCS prints it short, e.g. "2026-10-05".
+    pub date: String,
+    /// The whole message, subject first, surrounding blank lines trimmed.
+    pub message: String,
+}
+
+impl CommitDetail {
+    /// The message's subject line.
+    pub fn summary(&self) -> &str {
+        self.message.lines().next().unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileStatus {
     Added,

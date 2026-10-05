@@ -14,8 +14,8 @@ use crate::vcs::model::FileStatus;
 pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
     let theme = &app.theme;
     let progress = match app.checked_count() {
-        0 => format!("files ({})", app.files.len()),
-        done => format!("files ({done}/{} reviewed)", app.files.len()),
+        0 => format!("files ({})", app.file_count()),
+        done => format!("files ({done}/{} reviewed)", app.file_count()),
     };
     frame.render_widget(
         Paragraph::new(progress).style(header_style(theme, app.focused_pane() == Pane::Tree)),
@@ -35,12 +35,12 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
             let indent = "  ".repeat(node.depth);
             let label = |base: Style| label_spans(node.label.clone(), base, app);
             let mut line = match &node.kind {
-                // The PR session's virtual conversation entry.
-                NodeKind::File { index, .. } if app.is_pr_conversation(*index) => {
+                // A virtual entry: the PR conversation, a commit's message.
+                NodeKind::File { index, .. } if app.is_virtual(*index) => {
                     let accent = Style::default().fg(theme.thread);
                     let spans = vec![
                         Span::styled(format!("{indent}# "), accent),
-                        Span::styled(app.pr_conversation_label(), Style::default()),
+                        Span::styled(app.virtual_label(*index), Style::default()),
                     ];
                     Line::from(spans)
                 }
@@ -128,20 +128,22 @@ pub fn draw_path_tooltip(frame: &mut Frame, app: &App) {
     let Some(node) = app.nav.tree.row(cursor) else {
         return;
     };
-    // The PR session's virtual conversation entry has no real path.
-    let conversation = matches!(node.kind, crate::tree::NodeKind::File { index, .. }
-        if app.is_pr_conversation(index));
-    let (label, path) = if conversation {
-        let label = app.pr_conversation_label();
+    // Virtual entries have no real path.
+    let virtual_index = match node.kind {
+        crate::tree::NodeKind::File { index, .. } if app.is_virtual(index) => Some(index),
+        _ => None,
+    };
+    let (label, path) = if let Some(index) = virtual_index {
+        let label = app.virtual_label(index);
         (label.clone(), label)
     } else {
         (node.label.clone(), node.path.clone())
     };
     // Rows render as indent + a two-cell marker + the label, plus a
     // trailing slash on directories and a two-cell icon when enabled
-    // (the conversation entry never gets one).
+    // (virtual entries never get one).
     let slash = usize::from(matches!(node.kind, crate::tree::NodeKind::Dir { .. }));
-    let icon = usize::from(app.icons && !conversation) * 2;
+    let icon = usize::from(app.icons && virtual_index.is_none()) * 2;
     let row_width = node.depth * 2 + 2 + icon + label.as_str().width() + slash;
     if row_width <= area.width as usize {
         return; // the name fits — stay quiet

@@ -24,17 +24,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
         .current_file()
         .and_then(|f| lang_name(&f.path))
         .and_then(|name| theme.for_lang(name));
-    let title = app
-        .current_file()
-        .map(|f| f.path.display().to_string())
-        .unwrap_or_else(|| "no changes".to_string());
+    let virtual_name = app.current_file().and_then(|f| app.virtual_name(f));
+    let title = match (app.current_file(), virtual_name) {
+        (_, Some(name)) => name.to_string(),
+        (Some(f), None) => f.path.display().to_string(),
+        (None, None) => "no changes".to_string(),
+    };
 
     let title_style = header_style(theme, app.focused_pane() == Pane::Code);
     let mut header_spans = vec![Span::styled(title, title_style)];
+    // A virtual entry is prose, not a diff: no line counts.
     if let Some(FileView::Sections {
         diffstat: (adds, dels),
         ..
     }) = app.current_view()
+        && virtual_name.is_none()
     {
         header_spans.push(Span::styled(
             format!("  +{adds}"),
