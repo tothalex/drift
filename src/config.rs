@@ -303,7 +303,7 @@ pub fn load() -> Result<Config> {
     load_at(&config_path())
 }
 
-fn load_at(path: &Path) -> Result<Config> {
+pub(crate) fn load_at(path: &Path) -> Result<Config> {
     let file: ConfigFile = match std::fs::read_to_string(path) {
         Ok(text) => toml::from_str(&text)
             .with_context(|| format!("invalid config at {}", path.display()))?,
