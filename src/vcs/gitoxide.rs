@@ -16,8 +16,8 @@ use gix::status::index_worktree::iter::Summary;
 use imara_diff::{Algorithm, Diff, InternedInput};
 
 use crate::vcs::model::{
-    BranchInfo, ChangedFile, CommitInfo, Comparison, DiffLine, FileDiff, FileStatus, Hunk,
-    LineKind, RevisionId, Scope, WorktreeInfo,
+    BranchInfo, ChangedFile, CommitDetail, CommitInfo, Comparison, DiffLine, FileDiff, FileStatus,
+    Hunk, LineKind, RevisionId, Scope, WorktreeInfo,
 };
 use crate::vcs::{Vcs, VcsError};
 
@@ -618,6 +618,21 @@ impl Vcs for GixVcs {
             });
         }
         Ok(commits)
+    }
+
+    fn commit_detail(&self, rev: &RevisionId) -> Option<CommitDetail> {
+        let commit = self.find_commit(rev).ok()?;
+        let author = commit.author().ok()?;
+        let date = author.time().map_or_else(
+            |_| String::new(),
+            |time| time.format_or_unix(gix::date::time::format::SHORT),
+        );
+        Some(CommitDetail {
+            short_id: commit.id().shorten_or_id().to_string(),
+            author: author.name.to_str_lossy().into_owned(),
+            date,
+            message: commit.message_raw().ok()?.to_str_lossy().trim().to_string(),
+        })
     }
 }
 

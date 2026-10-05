@@ -140,7 +140,9 @@ base branch, kept live as you edit:
   to uncommitted changes only (the working copy against HEAD — what
   `git status` reports), or to one commit — or keep everything at once.
   `B` picks a scope on the current worktree without going through the
-  board.
+  board. One commit opens on its message: a `# commit message` entry
+  pinned above its files carries the full message, author, and date,
+  and the status bar shows its subject.
 - All views are precomputed on background threads — navigation stays
   instant regardless of changeset size.
 

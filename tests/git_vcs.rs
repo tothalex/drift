@@ -273,6 +273,39 @@ fn commits_lists_branch_commits_newest_first() {
 }
 
 #[test]
+fn commit_detail_carries_author_date_and_the_whole_message() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    write(dir, "second.txt", "more\n");
+    git(dir, &["add", "second.txt"]);
+    let status = Command::new("git")
+        .args([
+            "commit",
+            "-q",
+            "-m",
+            "fix: second\n\nWhy it changed,\nin a body.",
+        ])
+        .env("GIT_AUTHOR_DATE", "2030-01-02T03:04:05+00:00")
+        .current_dir(dir)
+        .output()
+        .expect("failed to run git");
+    assert!(status.status.success());
+
+    let vcs = detect(dir).unwrap();
+    let cmp = vcs.comparison(Some("master")).unwrap();
+    let commit = &vcs.commits(&cmp).unwrap()[0];
+    let detail = vcs.commit_detail(&commit.id).unwrap();
+    assert_eq!(detail.author, "T");
+    assert_eq!(detail.date, "2030-01-02");
+    assert_eq!(detail.message, "fix: second\n\nWhy it changed,\nin a body.");
+    assert_eq!(detail.summary(), commit.summary);
+    assert_eq!(detail.short_id, commit.short_id);
+
+    let missing = drift::vcs::model::RevisionId("0".repeat(40));
+    assert!(vcs.commit_detail(&missing).is_none());
+}
+
+#[test]
 fn commits_on_the_base_itself_offer_recent_history() {
     let tmp = fixture();
     let dir = tmp.path();

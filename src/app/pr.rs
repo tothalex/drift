@@ -272,7 +272,7 @@ fn comment_rows(key: &str, comment: &Comment) -> Vec<ViewLine> {
     rows
 }
 
-fn body_rows(key: &str, id: &str, body: &str) -> Vec<ViewLine> {
+pub(super) fn body_rows(key: &str, id: &str, body: &str) -> Vec<ViewLine> {
     wrap(body, WRAP_WIDTH)
         .into_iter()
         .map(|text| ViewLine::CommentBody {

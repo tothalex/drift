@@ -6,6 +6,7 @@
 //! global — no modes, no prefixes.
 
 pub mod code_view;
+pub mod commit;
 pub mod compose;
 pub mod panes;
 pub mod peek;
@@ -42,7 +43,8 @@ use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
 use crate::ui::CODE_GUTTER;
 use crate::vcs::model::{
-    ChangedFile, CommitInfo, Comparison, FileDiff, LineKind, RevisionId, Scope, WorktreeStats,
+    ChangedFile, CommitDetail, CommitInfo, Comparison, FileDiff, LineKind, RevisionId, Scope,
+    WorktreeStats,
 };
 use crate::vcs::{self, Vcs};
 
@@ -204,6 +206,10 @@ pub struct App {
     /// The open pull-request session, if any; while set, files and views
     /// come from the forge data instead of the working tree.
     pr: Option<PrSession>,
+    /// The commit a single-commit scope reviews, read when the file list
+    /// is: its message is the tree's virtual commit entry, and its
+    /// subject rides in the status bar.
+    scoped_commit: Option<CommitDetail>,
     /// Editor command template ({file}/{line} placeholders).
     editor: String,
     /// The `[agent]` config: sending code to an AI agent pane.
@@ -296,6 +302,7 @@ impl App {
             spinner: 0,
             spinner_running: Arc::new(AtomicBool::new(false)),
             pr: None,
+            scoped_commit: None,
             editor: config.editor,
             agent_config: config.agent,
             agent_last: None,
@@ -410,13 +417,33 @@ impl App {
         });
     }
 
-    /// Is this file index the PR session's virtual conversation entry?
-    pub fn is_pr_conversation(&self, index: usize) -> bool {
-        self.pr.is_some() && self.files.get(index).is_some_and(pr::is_conversation)
+    /// What a virtual entry stands for — the PR session's conversation,
+    /// a scoped commit's message — so file actions can refuse it by
+    /// name; `None` for real files.
+    pub fn virtual_name(&self, file: &ChangedFile) -> Option<&'static str> {
+        match &self.pr {
+            Some(_) => pr::is_conversation(file).then_some("conversation"),
+            None => {
+                (self.scoped_commit.is_some() && commit::is_entry(file)).then_some("commit message")
+            }
+        }
     }
 
-    /// Tree label for the conversation entry, with its comment count.
-    pub fn pr_conversation_label(&self) -> String {
+    /// Is this file index a virtual entry rather than a file?
+    pub fn is_virtual(&self, index: usize) -> bool {
+        self.files
+            .get(index)
+            .is_some_and(|file| self.virtual_name(file).is_some())
+    }
+
+    /// Tree label for a virtual entry: its name, plus the conversation's
+    /// comment count.
+    pub fn virtual_label(&self, index: usize) -> String {
+        let name = self
+            .files
+            .get(index)
+            .and_then(|file| self.virtual_name(file))
+            .unwrap_or_default();
         let count = self.pr.as_ref().map_or(0, |session| {
             session.data.conversation.len()
                 + session
@@ -427,9 +454,16 @@ impl App {
                     .count()
         });
         match count {
-            0 => "conversation".to_string(),
-            count => format!("conversation ({count})"),
+            0 => name.to_string(),
+            count => format!("{name} ({count})"),
         }
+    }
+
+    /// Files under review, leaving out the commit entry: a message is
+    /// read, not ticked off, so it never counts toward progress.
+    pub fn file_count(&self) -> usize {
+        let commit_entry = self.pr.is_none() && self.is_virtual(0);
+        self.files.len() - usize::from(commit_entry)
     }
 
     /// The status bar's comparison segment, e.g. " main ← feature " — or
@@ -448,7 +482,14 @@ impl App {
             Scope::All => String::new(),
             Scope::Committed => " · committed".to_string(),
             Scope::Uncommitted => " · uncommitted".to_string(),
-            Scope::Commit(rev) => format!(" · {}", &rev.0[..rev.0.len().min(7)]),
+            Scope::Commit(rev) => match &self.scoped_commit {
+                Some(commit) => format!(
+                    " · {} {}",
+                    commit.short_id,
+                    picker::fit_summary(commit.summary(), 32)
+                ),
+                None => format!(" · {}", &rev.0[..rev.0.len().min(7)]),
+            },
         };
         format!(
             " {} ← {}{} ",
@@ -884,8 +925,8 @@ impl App {
             self.notice = Some("no file to open".to_string());
             return;
         };
-        if pr::is_conversation(file) {
-            self.notice = Some("the conversation is not a file".to_string());
+        if let Some(name) = self.virtual_name(file) {
+            self.notice = Some(format!("the {name} is not a file"));
             return;
         }
         let path = self.vcs.root().join(&file.path);
@@ -941,8 +982,8 @@ impl App {
             self.notice = Some("no file to peek at".to_string());
             return;
         };
-        if pr::is_conversation(&file) {
-            self.notice = Some("the conversation is not a file".to_string());
+        if let Some(name) = self.virtual_name(&file) {
+            self.notice = Some(format!("the {name} is not a file"));
             return;
         }
         let Some(line) = self
@@ -2379,6 +2420,9 @@ impl App {
         let Some(index) = self.nav.selected_file() else {
             return Ok(());
         };
+        if self.pr.is_none() && self.is_virtual(index) {
+            return self.move_file(1); // the commit message: on to its files
+        }
         let path = self.files[index].path.clone();
         let checked = self.review.toggle(&path);
         if !pr::is_conversation(&self.files[index]) {
@@ -2536,7 +2580,8 @@ impl App {
     fn reload(&mut self) -> Result<()> {
         // A manual reload supersedes any in-flight live refresh.
         self.scan.cancel();
-        self.files = self.vcs.changed_files(&self.cmp)?;
+        let files = self.vcs.changed_files(&self.cmp)?;
+        self.set_local_files(files);
         self.nav.rebuild(&self.files);
         self.current = None;
         self.code.reset_for_new_view();
@@ -2546,6 +2591,20 @@ impl App {
         Ok(())
     }
 
+    /// Install the working tree's change list under `self.cmp`, the
+    /// commit entry first when the scope is a single commit whose
+    /// message can be read.
+    fn set_local_files(&mut self, mut files: Vec<ChangedFile>) {
+        self.scoped_commit = match &self.cmp.scope {
+            Scope::Commit(rev) => self.vcs.commit_detail(rev),
+            _ => None,
+        };
+        if self.scoped_commit.is_some() {
+            files.insert(0, commit::entry());
+        }
+        self.files = files;
+    }
+
     /// Manual refresh (`r`): recompute all files and views, but keep the
     /// reviewer's place — unlike [`Self::reload`], which starts over
     /// (new comparison, new PR, leaving a session).
@@ -2553,7 +2612,7 @@ impl App {
         self.scan.cancel();
         let files = self.vcs.changed_files(&self.cmp)?;
         let (current_path, lineno) = self.current_anchor();
-        self.files = files;
+        self.set_local_files(files);
         self.nav
             .rebuild_preserving(&self.files, self.tree_viewport());
         self.cache.reset();
@@ -2664,7 +2723,7 @@ impl App {
     fn apply_refresh(&mut self, files: Vec<ChangedFile>) -> Result<()> {
         // Anchor before anything moves.
         let (current_path, anchor) = self.current_anchor();
-        self.files = files;
+        self.set_local_files(files);
         self.nav
             .rebuild_preserving(&self.files, self.tree_viewport());
         let dirty: HashSet<PathBuf> = self.scan.dirty_paths.drain().collect();
@@ -2842,12 +2901,14 @@ impl App {
 
     /// Copy the shown file's absolute path to the clipboard.
     fn copy_path(&mut self) {
-        let Some(path) = self
-            .current_file()
-            .map(|f| self.vcs.root().join(&f.path).display().to_string())
-        else {
+        let Some(file) = self.current_file() else {
             return;
         };
+        if let Some(name) = self.virtual_name(file) {
+            self.notice = Some(format!("the {name} has no path"));
+            return;
+        }
+        let path = self.vcs.root().join(&file.path).display().to_string();
         self.notice = Some(match copy_to_clipboard(&path) {
             Ok(()) => format!("copied {path}"),
             Err(err) => format!("copy failed: {err}"),
@@ -2900,8 +2961,8 @@ impl App {
             self.notice = Some("no file to send from".to_string());
             return;
         };
-        if pr::is_conversation(file) {
-            self.notice = Some("the conversation is not code".to_string());
+        if let Some(name) = self.virtual_name(file) {
+            self.notice = Some(format!("the {name} is not code"));
             return;
         }
         let rel = file.path.display().to_string();
