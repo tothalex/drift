@@ -258,6 +258,9 @@ pub struct App {
     /// Review checks parked per worktree, so bouncing between agents
     /// doesn't lose what you already ticked off in each.
     checks_by_target: HashMap<RowId, Review>,
+    /// Files of the list that are machine-written (lockfiles, codegen):
+    /// dimmed in the tree and stepped over by file navigation.
+    generated: HashSet<PathBuf>,
     quit: bool,
 }
 
@@ -324,6 +327,7 @@ impl App {
             picker_search: String::new(),
             picker_search_input: false,
             checks_by_target: HashMap::new(),
+            generated: HashSet::new(),
             quit: false,
         };
         app.reload()?;
@@ -540,6 +544,13 @@ impl App {
             .is_some_and(|f| self.review.contains(&f.path))
     }
 
+    /// A machine-written file (lockfile, codegen output).
+    pub fn is_generated(&self, file_index: usize) -> bool {
+        self.files
+            .get(file_index)
+            .is_some_and(|f| self.generated.contains(&f.path))
+    }
+
     /// The file was checked off, then changed underneath the check.
     pub fn is_changed_since_check(&self, file_index: usize) -> bool {
         self.files
@@ -547,8 +558,19 @@ impl App {
             .is_some_and(|f| self.review.is_changed(&f.path))
     }
 
+    /// Checked files among the reviewable ones (see [`Self::reviewable_count`]).
     pub fn checked_count(&self) -> usize {
-        self.review.count_in(&self.files)
+        let reviewable = self
+            .files
+            .iter()
+            .filter(|f| !self.generated.contains(&f.path));
+        self.review.count_in(reviewable)
+    }
+
+    /// The files progress counts toward: generated ones never need a
+    /// review, so they are neither part of the total nor of the count.
+    pub fn reviewable_count(&self) -> usize {
+        self.file_count() - self.generated.len()
     }
 
     /// Rows of the current view's flattening — the code cursor's range.
@@ -1727,9 +1749,10 @@ impl App {
         if let Some(viewed) = session.data.viewed.clone() {
             self.review.adopt(&self.files, &viewed);
         }
+        self.classify_generated();
         self.cache.reset();
         if !same {
-            self.nav.rebuild(&self.files);
+            self.rebuild_tree();
             self.current = None;
             self.code.reset_for_new_view();
             self.sync_current()?;
@@ -2302,10 +2325,11 @@ impl App {
         let viewport = self.tree_viewport();
         let files = &self.files;
         let review = &self.review;
+        let generated = &self.generated;
         let skip = |file_index: usize| {
             files
                 .get(file_index)
-                .is_some_and(|f| review.contains(&f.path))
+                .is_some_and(|f| review.contains(&f.path) || generated.contains(&f.path))
         };
         self.nav.move_cursor(delta, viewport, skip);
         self.sync_current()
@@ -2602,7 +2626,7 @@ impl App {
         let files = self.vcs.changed_files(&self.cmp)?;
         self.set_local_files(files);
         self.verify_checks();
-        self.nav.rebuild(&self.files);
+        self.rebuild_tree();
         self.current = None;
         self.code.reset_for_new_view();
         self.cache.reset();
@@ -2623,6 +2647,28 @@ impl App {
             files.insert(0, commit::entry());
         }
         self.files = files;
+        self.classify_generated();
+    }
+
+    /// Start a fresh tree over the file list, on its first file that
+    /// isn't generated — nobody opens a review to read a lockfile.
+    fn rebuild_tree(&mut self) {
+        let (files, generated) = (&self.files, &self.generated);
+        self.nav
+            .rebuild(files, |index| generated.contains(&files[index].path));
+    }
+
+    /// Mark the list's generated files: the repository's attributes
+    /// first, built-in lockfile and codegen names for the rest.
+    fn classify_generated(&mut self) {
+        let attrs = self.vcs.generated_attrs(&self.files);
+        self.generated = self
+            .files
+            .iter()
+            .zip(attrs)
+            .filter(|(file, attr)| vcs::generated::is_generated(&file.path, *attr))
+            .map(|(file, _)| file.path.clone())
+            .collect();
     }
 
     /// Re-read every stamped check's file and drop the ones that changed

@@ -114,7 +114,8 @@ base branch, kept live as you edit:
   unchanged comment blocks can be folded to a one-line summary.
 - Two-pane focus: `h` aims the cursor keys at the file tree, `l` at the
   code view (the lit-up header shows which; clicking a pane focuses it
-  too). `H`/`L` step between files, skipping ones checked off.
+  too). `H`/`L` step between files, skipping ones checked off and
+  generated ones.
 - Each pane keeps its own `/` search with match highlighting; `n`/`N`
   cycle the focused pane's matches — and in an unsearched code view
   they hop between the changes themselves, so large files navigate by
@@ -126,6 +127,13 @@ base branch, kept live as you edit:
   you check it again. Only real changes count: saving identical
   content, or switching review scope, keeps the check. A name clipped
   by a narrow pane shows its full path in a tooltip under the cursor.
+- Generated files — lockfiles (`Cargo.lock`, `package-lock.json`,
+  `go.sum`, …), minified bundles, protobuf and `*.generated.*` output —
+  recede in the tree, navigation steps over them (a review never opens
+  on one), and they don't count toward review progress; they're still a
+  `j`/`k` away. The repository has the final say through
+  `.gitattributes`: `linguist-generated` marks more files,
+  `-linguist-generated` opts one back in.
 - Vim-style keys (counts, `g`/`G`, visual mode, yank) and full mouse
   support (wheel per pane, click to place the cursor, drag-to-copy,
   pane resize).

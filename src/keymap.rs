@@ -195,7 +195,7 @@ const HELP: &[(&[Action], &str)] = &[
     ),
     (
         &[Action::NextFile, Action::PrevFile],
-        "next / previous file (skips reviewed)",
+        "next / previous file (skips reviewed, generated)",
     ),
     (&[Action::CheckFile], "check file as reviewed, go to next"),
     (&[Action::UncheckLast], "uncheck the last review, jump back"),

@@ -146,9 +146,9 @@ impl Review {
     }
 
     /// How many of the given files are checked (stale paths don't count).
-    pub fn count_in(&self, files: &[ChangedFile]) -> usize {
+    pub fn count_in<'a>(&self, files: impl IntoIterator<Item = &'a ChangedFile>) -> usize {
         files
-            .iter()
+            .into_iter()
             .filter(|f| self.checked.contains_key(&f.path))
             .count()
     }

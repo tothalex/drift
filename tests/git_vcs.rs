@@ -429,6 +429,32 @@ fn a_deleted_file_has_no_new_side_id() {
 }
 
 #[test]
+fn generated_attrs_follow_gitattributes() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    write(
+        dir,
+        ".gitattributes",
+        "lib.rs linguist-generated\nnotes.txt -linguist-generated\n",
+    );
+    let vcs = detect(dir).unwrap();
+    let cmp = vcs.comparison(Some("master")).unwrap();
+    let files = vcs.changed_files(&cmp).unwrap();
+    let attrs = vcs.generated_attrs(&files);
+    let attr_of = |name: &str| {
+        let index = files
+            .iter()
+            .position(|f| f.path == Path::new(name))
+            .unwrap();
+        attrs[index]
+    };
+
+    assert_eq!(attr_of("lib.rs"), Some(true));
+    assert_eq!(attr_of("notes.txt"), Some(false));
+    assert_eq!(attr_of("untracked.rs"), None);
+}
+
+#[test]
 fn uncommitted_scope_matches_git_status() {
     let tmp = fixture();
     let dir = tmp.path();

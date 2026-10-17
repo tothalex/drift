@@ -15,7 +15,7 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
     let theme = &app.theme;
     let progress = match app.checked_count() {
         0 => format!("files ({})", app.file_count()),
-        done => format!("files ({done}/{} reviewed)", app.file_count()),
+        done => format!("files ({done}/{} reviewed)", app.reviewable_count()),
     };
     frame.render_widget(
         Paragraph::new(progress).style(header_style(theme, app.focused_pane() == Pane::Tree)),
@@ -74,6 +74,21 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                     // Reviewed: the whole row recedes behind a checkmark.
                     let dim = Style::default().fg(theme.muted);
                     let mut spans = vec![Span::styled(format!("{indent}✓ "), dim)];
+                    if app.icons {
+                        spans.push(Span::styled(
+                            format!("{} ", icons::file(&node.label).0),
+                            dim,
+                        ));
+                    }
+                    spans.extend(label(dim));
+                    Line::from(spans)
+                }
+                NodeKind::File { index, status } if app.is_generated(*index) => {
+                    // Machine-written: the row recedes like a checked one
+                    // but keeps its status letter — nobody reviewed it.
+                    let dim = Style::default().fg(theme.muted);
+                    let mut spans =
+                        vec![Span::styled(format!("{indent}{} ", status.letter()), dim)];
                     if app.icons {
                         spans.push(Span::styled(
                             format!("{} ", icons::file(&node.label).0),

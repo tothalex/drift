@@ -537,6 +537,37 @@ impl Vcs for GixVcs {
             .collect()
     }
 
+    fn generated_attrs(&self, files: &[ChangedFile]) -> Vec<Option<bool>> {
+        let unspecified = || vec![None; files.len()];
+        let Ok(index) = self.repo.index_or_empty() else {
+            return unspecified();
+        };
+        let Ok(mut stack) = self.repo.attributes_only(
+            &index,
+            gix::worktree::stack::state::attributes::Source::WorktreeThenIdMapping,
+        ) else {
+            return unspecified();
+        };
+        let mut outcome = stack.selected_attribute_matches(["linguist-generated"]);
+        files
+            .iter()
+            .map(|file| {
+                outcome.reset();
+                stack
+                    .at_path(&file.path, None)
+                    .ok()?
+                    .matching_attributes(&mut outcome);
+                let state = outcome.iter_selected().next()?.assignment.state;
+                match state {
+                    gix::attrs::StateRef::Set => Some(true),
+                    gix::attrs::StateRef::Unset => Some(false),
+                    gix::attrs::StateRef::Value(value) => Some(value.as_bstr() != "false"),
+                    gix::attrs::StateRef::Unspecified => None,
+                }
+            })
+            .collect()
+    }
+
     fn worktrees(&self) -> Result<Vec<WorktreeInfo>, VcsError> {
         // gix lists linked worktrees only, so the main one is added by
         // hand — from the board's point of view it is just another row.

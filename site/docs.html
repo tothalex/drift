@@ -274,6 +274,14 @@
       a tooltip under the cursor; the <a href="#keys">review board</a>
       answers a clipped commit summary or branch name the same way, and
       an expanded row widens the panel to fit the summaries it holds.</p>
+      <p>Generated files — lockfiles (<code>Cargo.lock</code>,
+      <code>package-lock.json</code>, <code>go.sum</code>, …), minified
+      bundles, protobuf and <code>*.generated.*</code> output — recede in
+      the file tree, <kbd>H</kbd> / <kbd>L</kbd> step over them (a review
+      never opens on one), and they don't count toward review progress.
+      <code>.gitattributes</code> has the final say:
+      <code>linguist-generated</code> marks more files,
+      <code>-linguist-generated</code> opts one back in.</p>
     </section>
 
     <section id="keys">
@@ -289,7 +297,7 @@
         <tr><td>j / k</td><td>Move the cursor in the focused pane (clicking a line also moves it there).</td></tr>
         <tr><td>d / u</td><td>Jump 15 lines (also PageDown / PageUp).</td></tr>
         <tr><td>g / G</td><td>Jump to top / bottom; <code>10G</code> goes to line 10.</td></tr>
-        <tr><td>H / L</td><td>Previous / next file, skipping reviewed ones.</td></tr>
+        <tr><td>H / L</td><td>Previous / next file, skipping reviewed and generated ones.</td></tr>
         <tr><td>o</td><td>Open / close a folder (also Enter, Space).</td></tr>
         <tr><td>t</td><td>Show / hide the file tree.</td></tr>
         <tr><td>&gt; / &lt;</td><td>Resize the panes (or drag the divider).</td></tr>

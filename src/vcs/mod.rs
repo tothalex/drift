@@ -1,6 +1,7 @@
 //! The VCS abstraction: providers implement [`Vcs`], the rest of the app
 //! consumes [`model`] types and never sees a concrete VCS.
 
+pub mod generated;
 pub mod gitoxide;
 pub mod model;
 pub mod unidiff;
@@ -126,6 +127,14 @@ pub trait Vcs {
     /// convenience and not a count.
     fn work_tip(&self, _cmp: &Comparison) -> Option<RevisionId> {
         None
+    }
+
+    /// What the repository's attributes say about each file being
+    /// generated (`linguist-generated`), aligned with `files`: `Some`
+    /// when the attribute is set or unset for it, `None` when it is
+    /// unspecified — [`generated::is_generated`] decides those.
+    fn generated_attrs(&self, files: &[ChangedFile]) -> Vec<Option<bool>> {
+        vec![None; files.len()]
     }
 
     /// Of these root-relative paths, the ones the VCS does not ignore.

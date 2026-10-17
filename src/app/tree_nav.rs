@@ -14,8 +14,17 @@ pub struct TreeNav {
 
 impl TreeNav {
     pub fn new(files: &[ChangedFile]) -> TreeNav {
+        TreeNav::starting(files, |_| false)
+    }
+
+    /// A fresh tree, its cursor on the first file `skip` passes over —
+    /// or on the very first file when it would pass over them all.
+    fn starting(files: &[ChangedFile], skip: impl Fn(usize) -> bool) -> TreeNav {
         let tree = FileTree::build(files);
-        let cursor = tree.first_file_row().unwrap_or(0);
+        let cursor = (0..tree.visible_len())
+            .find(|&row| tree.file_at(row).is_some_and(|index| !skip(index)))
+            .or_else(|| tree.first_file_row())
+            .unwrap_or(0);
         TreeNav {
             tree,
             cursor,
@@ -23,8 +32,10 @@ impl TreeNav {
         }
     }
 
-    pub fn rebuild(&mut self, files: &[ChangedFile]) {
-        *self = TreeNav::new(files);
+    /// Start over on a new file list, the cursor on its first file
+    /// that `skip` (generated files) doesn't pass over.
+    pub fn rebuild(&mut self, files: &[ChangedFile], skip: impl Fn(usize) -> bool) {
+        *self = TreeNav::starting(files, skip);
     }
 
     /// Rebuild for a live refresh: collapsed directories and the cursor
@@ -145,6 +156,18 @@ mod tests {
             10,
         );
         assert_eq!(nav.tree.row_path(nav.cursor), Some("z.rs"));
+    }
+
+    #[test]
+    fn rebuild_starts_past_skipped_files_unless_all_are() {
+        let files = [changed("bun.lock"), changed("main.ts")];
+        let mut nav = TreeNav::new(&[]);
+
+        nav.rebuild(&files, |index| index == 0);
+        assert_eq!(nav.tree.row_path(nav.cursor), Some("main.ts"));
+
+        nav.rebuild(&files, |_| true);
+        assert_eq!(nav.tree.row_path(nav.cursor), Some("bun.lock"));
     }
 
     #[test]
