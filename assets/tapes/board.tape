@@ -24,7 +24,10 @@ Sleep 600ms
 Type@120ms "drift"
 Sleep 400ms
 Enter
-Sleep 2.5s
+Sleep 1.2s
+# Widen the tree (4 × 2%) so grouped names and icons fit.
+Type "4>"
+Sleep 1.3s
 
 # Every worktree, newest first, with what each one holds.
 Type "b"

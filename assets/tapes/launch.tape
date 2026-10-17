@@ -27,7 +27,10 @@ Sleep 600ms
 Type@120ms "drift"
 Sleep 500ms
 Enter
-Sleep 2.5s
+Sleep 1.2s
+# Widen the tree (4 × 2%) so grouped names and icons fit.
+Type "4>"
+Sleep 1.3s
 
 # Walk the change, widen the scope and narrow it again.
 Type "l"

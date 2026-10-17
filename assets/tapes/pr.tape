@@ -22,7 +22,10 @@ Sleep 600ms
 Type@110ms "drift --pr 1"
 Sleep 500ms
 Enter
-Sleep 7s
+Sleep 5.5s
+# Widen the tree (4 × 2%) so grouped names and icons fit.
+Type "4>"
+Sleep 1.5s
 
 # Read the description, then walk to the change with the review thread.
 Sleep 1.5s
@@ -30,5 +33,8 @@ Type "L"
 Sleep 1.2s
 Type "L"
 Sleep 2s
+# Into the code pane, onto the lines under the review thread.
+Type "l"
+Sleep 500ms
 Type@300ms "jj"
 Sleep 4s
