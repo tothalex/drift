@@ -31,7 +31,9 @@ impl PaneLayout {
             code_area: Rect::default(),
             main_area: Rect::default(),
             divider_x: 0,
-            split_percent: 16,
+            // Wide enough for the grouped tree, a level deeper than
+            // plain directories, to keep names whole.
+            split_percent: 20,
             tree_visible: true,
             resizing: false,
         }
