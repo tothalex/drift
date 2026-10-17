@@ -572,7 +572,10 @@
       <p class="dim">When the PR's commits exist locally (after any
       <code>git fetch</code>), diffs get full syntax highlighting and
       block scoping; otherwise drift falls back to plain hunks — no fetch
-      is ever run for you.</p>
+      is ever run for you. Large pull requests open too: past GitHub's
+      size limit for a whole diff, drift loads it file by file, and a
+      single file the forge leaves out as too large says so in place of
+      its diff rather than passing for unchanged.</p>
     </section>
 
     <section id="ai-agents">

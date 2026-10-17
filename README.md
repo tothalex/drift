@@ -324,6 +324,11 @@ conversation in place:
 - When the PR's commits exist locally (after any `git fetch`), diffs get
   full syntax highlighting and block scoping; otherwise drift falls back
   to the plain hunk view — no fetch is ever run for you.
+- Large pull requests open too: past GitHub's size limit for a whole
+  diff, drift loads it file by file. A single file the forge leaves out
+  as too large (GitHub and GitLab both do, for big lockfiles and
+  generated code) says so in place of its diff, rather than passing
+  for unchanged.
 
 drift talks to the forge through the official CLIs — [`gh`] for GitHub,
 [`glab`] for GitLab — so install the one for your forge and run its

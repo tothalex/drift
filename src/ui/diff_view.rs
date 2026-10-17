@@ -98,6 +98,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, header: Rect, content: Rect) {
             vec![(0, 0)],
             0,
         ),
+        Some(FileView::TooLarge) => (
+            vec![style_row(
+                0,
+                Line::styled(" diff too large to show — the forge left it out", dim),
+            )],
+            vec![(0, 0)],
+            0,
+        ),
         Some(FileView::Unchanged) => (
             vec![style_row(
                 0,

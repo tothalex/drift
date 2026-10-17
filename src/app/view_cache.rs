@@ -141,7 +141,7 @@ pub fn compute(
 
 pub(crate) fn has_removed_lines(diff: &FileDiff) -> bool {
     match diff {
-        FileDiff::Binary => false,
+        FileDiff::Binary | FileDiff::TooLarge => false,
         FileDiff::Text { hunks } => hunks
             .iter()
             .any(|h| h.lines.iter().any(|l| l.kind == LineKind::Removed)),

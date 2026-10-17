@@ -46,7 +46,7 @@ pub fn peek(path: &Path, source: &str, diff: &FileDiff, line: u32) -> Option<Pee
     );
 
     let added: HashSet<u32> = match diff {
-        FileDiff::Binary => HashSet::new(),
+        FileDiff::Binary | FileDiff::TooLarge => HashSet::new(),
         FileDiff::Text { hunks } => hunks
             .iter()
             .flat_map(|h| &h.lines)

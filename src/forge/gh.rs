@@ -11,8 +11,12 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-use crate::forge::model::{Anchor, Comment, CommentThread, PrData, PrDetail, PullRequest, Side};
+use crate::forge::model::{
+    Anchor, Comment, CommentThread, PrData, PrDetail, PrFile, PullRequest, Side,
+};
 use crate::forge::{Forge, ForgeError, args, concat_arrays, patch, run_cli};
+use crate::vcs::model::{ChangedFile, FileDiff, FileStatus};
+use crate::vcs::unidiff;
 
 pub struct GhCli {
     root: PathBuf,
@@ -131,8 +135,17 @@ impl Forge for GhCli {
             "api",
             &format!("repos/{{owner}}/{{repo}}/pulls/{number}"),
         ]))?)?;
-        let diff = self.run(&args(&["pr", "diff", &number.to_string()]))?;
-        let files = patch::split(&diff);
+        let files = match self.run(&args(&["pr", "diff", &number.to_string()])) {
+            Ok(diff) => patch::split(&diff),
+            // GitHub won't send one diff for a pull request past its size
+            // limit; the per-file listing still carries each file's own.
+            Err(err) if diff_too_large(&err) => parse_files(&self.run(&args(&[
+                "api",
+                &format!("repos/{{owner}}/{{repo}}/pulls/{number}/files"),
+                "--paginate",
+            ]))?)?,
+            Err(err) => return Err(err),
+        };
         let (threads, conversation) = self.threads(number, &detail)?;
         Ok(PrData {
             detail,
@@ -355,6 +368,68 @@ fn parse_list(json: &str) -> Result<Vec<PullRequest>, ForgeError> {
             url: item.url,
         })
         .collect())
+}
+
+/// GitHub's refusal to send a whole pull request's diff: past a line
+/// or file limit, `gh pr diff` fails with HTTP 406.
+fn diff_too_large(err: &ForgeError) -> bool {
+    matches!(err, ForgeError::CliFailed { stderr, .. }
+        if stderr.contains("HTTP 406") || stderr.contains("exceeded the maximum number"))
+}
+
+#[derive(Deserialize)]
+struct ApiFile {
+    filename: String,
+    status: String,
+    #[serde(default)]
+    previous_filename: Option<String>,
+    /// The file's hunks alone, no headers. Absent for a binary file, and
+    /// for a text file GitHub judged too large to send.
+    #[serde(default)]
+    patch: Option<String>,
+    #[serde(default)]
+    additions: u64,
+    #[serde(default)]
+    deletions: u64,
+}
+
+/// The per-file listing (`pulls/{n}/files`, every page) as changed
+/// files — the same shape `patch::split` makes of a whole diff.
+fn parse_files(json: &str) -> Result<Vec<PrFile>, ForgeError> {
+    let mut files: Vec<PrFile> = concat_arrays::<ApiFile>("gh", json)?
+        .into_iter()
+        .map(|file| {
+            let status = match file.status.as_str() {
+                "added" => FileStatus::Added,
+                "removed" => FileStatus::Deleted,
+                "renamed" => FileStatus::Renamed,
+                "copied" => FileStatus::Copied,
+                _ => FileStatus::Modified,
+            };
+            // A missing patch is a binary file, unless lines changed.
+            let diff = match (&file.patch, file.additions + file.deletions) {
+                (Some(patch), _) => unidiff::parse(patch),
+                (None, 0) => FileDiff::Binary,
+                (None, _) => FileDiff::TooLarge,
+            };
+            let old_path = match status {
+                FileStatus::Renamed | FileStatus::Copied => {
+                    file.previous_filename.map(PathBuf::from)
+                }
+                _ => None,
+            };
+            PrFile {
+                changed: ChangedFile {
+                    status,
+                    path: PathBuf::from(file.filename),
+                    old_path,
+                },
+                diff,
+            }
+        })
+        .collect();
+    files.sort_by(|a, b| a.changed.path.cmp(&b.changed.path));
+    Ok(files)
 }
 
 #[derive(Deserialize)]
@@ -580,6 +655,63 @@ fn parse_thread_meta(json: &str) -> Result<Vec<ThreadMeta>, ForgeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_too_large_diff_is_told_from_other_failures() {
+        let failed = |stderr: &str| ForgeError::CliFailed {
+            cli: "gh",
+            stderr: stderr.to_string(),
+        };
+        assert!(diff_too_large(&failed(
+            "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum number of lines"
+        )));
+        assert!(!diff_too_large(&failed("HTTP 404: Not Found")));
+        assert!(!diff_too_large(&ForgeError::CliMissing("gh")));
+    }
+
+    #[test]
+    fn the_per_file_listing_parses_page_by_page() {
+        // Two pages, as `--paginate` prints them.
+        let json = r#"[
+            {"filename":"src/b.rs","status":"modified","additions":1,"deletions":1,
+             "patch":"@@ -1,2 +1,2 @@\n context\n-old\n+new"},
+            {"filename":"Cargo.lock","status":"modified","additions":249,"deletions":2360}
+        ]
+        [
+            {"filename":"src/new_name.rs","status":"renamed","previous_filename":"src/old_name.rs",
+             "additions":0,"deletions":0,"patch":""},
+            {"filename":"logo.png","status":"removed","additions":0,"deletions":0},
+            {"filename":"src/a.rs","status":"added","additions":1,"deletions":0,
+             "patch":"@@ -0,0 +1 @@\n+fn a() {}"}
+        ]"#;
+        let files = parse_files(json).unwrap();
+
+        let shape: Vec<(char, &str)> = files
+            .iter()
+            .map(|f| (f.changed.status.letter(), f.changed.path.to_str().unwrap()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ('M', "Cargo.lock"),
+                ('D', "logo.png"),
+                ('A', "src/a.rs"),
+                ('M', "src/b.rs"),
+                ('R', "src/new_name.rs"),
+            ]
+        );
+        assert!(matches!(files[0].diff, FileDiff::TooLarge));
+        assert!(matches!(files[1].diff, FileDiff::Binary));
+        let FileDiff::Text { hunks } = &files[3].diff else {
+            panic!("text diff expected");
+        };
+        assert_eq!(hunks[0].lines.len(), 3);
+        assert_eq!(
+            files[4].changed.old_path.as_deref(),
+            Some(Path::new("src/old_name.rs"))
+        );
+        assert!(matches!(&files[4].diff, FileDiff::Text { hunks } if hunks.is_empty()));
+    }
 
     #[test]
     fn list_parses() {
