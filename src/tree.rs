@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::group::Group;
+use crate::group::{Group, Kind};
 use crate::vcs::model::{ChangedFile, FileStatus};
 
 /// Root paths starting with this are virtual entries (about the whole
@@ -78,6 +78,7 @@ pub enum NodeKind {
         expanded: bool,
         /// Indices into the changed-files list, for its progress.
         files: Vec<usize>,
+        kind: Kind,
     },
     /// The blank row above a group header, setting the groups apart.
     /// Never a cursor stop.
@@ -164,6 +165,7 @@ impl FileTree {
                     children: Vec::new(),
                     expanded: true,
                     files: group.files.clone(),
+                    kind: group.kind,
                 },
             });
             let children = tree.convert(sub, 1, "", &format!("{path}/"));
@@ -524,6 +526,10 @@ mod tests {
 
     fn group(label: &str, files: &[usize]) -> Group {
         Group {
+            kind: Kind::ALL
+                .into_iter()
+                .find(|kind| kind.label() == label)
+                .unwrap_or(Kind::Code),
             label: label.to_string(),
             files: files.to_vec(),
         }

@@ -38,14 +38,24 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                 // A virtual entry: the PR conversation, a commit's message.
                 NodeKind::File { index, .. } if app.is_virtual(*index) => {
                     let accent = Style::default().fg(theme.thread);
+                    // With icons, the entry's own glyph takes the `#`'s
+                    // place — the same two cells.
+                    let marker = match (app.icons, app.pr_session().is_some()) {
+                        (false, _) => "#",
+                        (true, true) => icons::CONVERSATION,
+                        (true, false) => icons::COMMIT,
+                    };
                     let spans = vec![
-                        Span::styled(format!("{indent}# "), accent),
+                        Span::styled(format!("{indent}{marker} "), accent),
                         Span::styled(app.virtual_label(*index), Style::default()),
                     ];
                     Line::from(spans)
                 }
                 NodeKind::Group {
-                    expanded, files, ..
+                    expanded,
+                    files,
+                    kind,
+                    ..
                 } => {
                     // A review group: its name and how far its review
                     // got — generated files never count, as in the header.
@@ -62,7 +72,10 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                     };
                     let accent = Style::default().fg(theme.group);
                     let muted = Style::default().fg(theme.muted);
-                    let glyph = format!("{indent}{} ", if *expanded { '▾' } else { '▸' });
+                    let mut glyph = format!("{indent}{} ", if *expanded { '▾' } else { '▸' });
+                    if app.icons {
+                        glyph.push_str(&format!("{} ", icons::group(*kind)));
+                    }
                     // A rule out to the count at the pane's edge, so a
                     // group reads as a section, not one more folder.
                     let used = glyph.width() + node.label.width() + count.width() + 2;
@@ -197,7 +210,7 @@ pub fn draw_path_tooltip(frame: &mut Frame, app: &App) {
     };
     // Rows render as indent + a two-cell marker + the label, plus a
     // trailing slash on directories and a two-cell icon when enabled
-    // (virtual entries never get one).
+    // (a virtual entry's icon is its marker, so it adds nothing).
     let slash = usize::from(matches!(node.kind, crate::tree::NodeKind::Dir { .. }));
     let icon = usize::from(app.icons && virtual_index.is_none()) * 2;
     let row_width = node.depth * 2 + 2 + icon + label.as_str().width() + slash;

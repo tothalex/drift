@@ -218,14 +218,16 @@ mod tests {
 
     #[test]
     fn the_cursor_never_rests_on_a_group_gap() {
-        use crate::group::Group;
+        use crate::group::{Group, Kind};
         let files = [changed("src/a.rs"), changed("README.md")];
         let groups = [
             Group {
+                kind: Kind::Code,
                 label: "code".into(),
                 files: vec![0],
             },
             Group {
+                kind: Kind::Docs,
                 label: "docs".into(),
                 files: vec![1],
             },

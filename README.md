@@ -427,8 +427,9 @@ language — rust, typescript, go, …) overrides any syntax color for
 that language only. A top-level `base = "…"` sets the default
 comparison branch. With a [Nerd Font](https://www.nerdfonts.com)
 terminal, `icons = true` (or `--icons` for one session) adds
-per-language file icons and folder glyphs to the tree — opt-in,
-because drift can't detect the terminal's font.
+per-language file icons and folder glyphs to the tree, an icon per
+review group, and icons for the pinned conversation and commit entries
+— opt-in, because drift can't detect the terminal's font.
 
 Colors layer in three steps: a base colorscheme, then `[theme]` /
 `[theme.<lang>]` overrides on top. The built-in colorscheme is

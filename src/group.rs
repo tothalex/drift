@@ -44,6 +44,8 @@ impl Kind {
 
 /// One group of the tree's grouped layout: a header over its files.
 pub struct Group {
+    /// What the group holds — its icon under `icons = true`.
+    pub kind: Kind,
     pub label: String,
     /// Indices into the changed-files list.
     pub files: Vec<usize>,
@@ -55,7 +57,8 @@ pub struct Group {
 pub fn by_kind(files: &[ChangedFile], generated: impl Fn(usize) -> bool) -> Vec<Group> {
     let mut groups: Vec<Group> = Kind::ALL
         .iter()
-        .map(|kind| Group {
+        .map(|&kind| Group {
+            kind,
             label: kind.label().to_string(),
             files: Vec::new(),
         })
