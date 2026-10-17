@@ -14,13 +14,12 @@ pub struct TreeNav {
 
 impl TreeNav {
     pub fn new(files: &[ChangedFile]) -> TreeNav {
-        TreeNav::starting(files, |_| false)
+        TreeNav::starting(FileTree::build(files), |_| false)
     }
 
     /// A fresh tree, its cursor on the first file `skip` passes over —
     /// or on the very first file when it would pass over them all.
-    fn starting(files: &[ChangedFile], skip: impl Fn(usize) -> bool) -> TreeNav {
-        let tree = FileTree::build(files);
+    fn starting(tree: FileTree, skip: impl Fn(usize) -> bool) -> TreeNav {
         let cursor = (0..tree.visible_len())
             .find(|&row| tree.file_at(row).is_some_and(|index| !skip(index)))
             .or_else(|| tree.first_file_row())
@@ -32,19 +31,18 @@ impl TreeNav {
         }
     }
 
-    /// Start over on a new file list, the cursor on its first file
-    /// that `skip` (generated files) doesn't pass over.
-    pub fn rebuild(&mut self, files: &[ChangedFile], skip: impl Fn(usize) -> bool) {
-        *self = TreeNav::starting(files, skip);
+    /// Start over on a new tree, the cursor on its first file that
+    /// `skip` (generated files) doesn't pass over.
+    pub fn rebuild(&mut self, tree: FileTree, skip: impl Fn(usize) -> bool) {
+        *self = TreeNav::starting(tree, skip);
     }
 
-    /// Rebuild for a live refresh: collapsed directories and the cursor
-    /// carry over by path, so the user's place survives the file list
-    /// changing underneath them.
-    pub fn rebuild_preserving(&mut self, files: &[ChangedFile], viewport: usize) {
+    /// Rebuild for a live refresh or a layout switch: collapsed
+    /// directories and the cursor carry over by path, so the user's
+    /// place survives the tree changing underneath them.
+    pub fn rebuild_preserving(&mut self, mut tree: FileTree, viewport: usize) {
         let cursor_path = self.tree.row_path(self.cursor).map(str::to_string);
         let collapsed = self.tree.collapsed_paths();
-        let mut tree = FileTree::build(files);
         tree.collapse_paths(&collapsed);
         let last = tree.visible_len().saturating_sub(1);
         // The cursor's node may be gone (file reverted); stay near the
@@ -152,7 +150,7 @@ mod tests {
         nav.set_cursor(2, 10);
         // A new file shifts z.rs to a different row.
         nav.rebuild_preserving(
-            &[changed("src/a.rs"), changed("src/b.rs"), changed("z.rs")],
+            FileTree::build(&[changed("src/a.rs"), changed("src/b.rs"), changed("z.rs")]),
             10,
         );
         assert_eq!(nav.tree.row_path(nav.cursor), Some("z.rs"));
@@ -163,10 +161,10 @@ mod tests {
         let files = [changed("bun.lock"), changed("main.ts")];
         let mut nav = TreeNav::new(&[]);
 
-        nav.rebuild(&files, |index| index == 0);
+        nav.rebuild(FileTree::build(&files), |index| index == 0);
         assert_eq!(nav.tree.row_path(nav.cursor), Some("main.ts"));
 
-        nav.rebuild(&files, |_| true);
+        nav.rebuild(FileTree::build(&files), |_| true);
         assert_eq!(nav.tree.row_path(nav.cursor), Some("bun.lock"));
     }
 
@@ -174,7 +172,7 @@ mod tests {
     fn rebuild_preserving_survives_vanished_cursor_file() {
         let mut nav = TreeNav::new(&[changed("a.rs"), changed("b.rs")]);
         nav.set_cursor(1, 10);
-        nav.rebuild_preserving(&[changed("a.rs")], 10);
+        nav.rebuild_preserving(FileTree::build(&[changed("a.rs")]), 10);
         // b.rs is gone: the cursor stays nearby instead of resetting.
         assert_eq!(nav.cursor, 0);
         assert_eq!(nav.tree.row_path(0), Some("a.rs"));

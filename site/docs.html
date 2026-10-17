@@ -196,6 +196,7 @@
     <a class="sub" href="#config-forge">[forge]</a>
     <a class="sub" href="#config-agent">[agent]</a>
     <a class="sub" href="#config-board">[board]</a>
+    <a class="sub" href="#config-tree">[tree]</a>
     <a class="sub" href="#config-picker">[picker]</a>
     <a class="sub" href="#config-update">[update]</a>
     <a href="#languages">Language plugins</a>
@@ -300,6 +301,7 @@
         <tr><td>H / L</td><td>Previous / next file, skipping reviewed and generated ones.</td></tr>
         <tr><td>o</td><td>Open / close a folder (also Enter, Space).</td></tr>
         <tr><td>t</td><td>Show / hide the file tree.</td></tr>
+        <tr><td>f</td><td>Switch the tree between review groups — code, tests, docs, config, dependencies, generated, each over its own directory tree with its review progress — and plain directories. Starts grouped; see <a href="#config-tree"><code>[tree]</code></a>.</td></tr>
         <tr><td>&gt; / &lt;</td><td>Resize the panes (or drag the divider).</td></tr>
         <tr><td>/</td><td>Search the focused pane; <code>n</code> / <code>N</code> cycle matches — with no search active they hop between changes.</td></tr>
       </table>
@@ -436,6 +438,19 @@
         copy to read). <kbd>b</kbd> flips between them at any time and
         each keeps its own place; this setting only picks the one you
         start on.</p>
+      </section>
+
+      <section id="config-tree">
+        <h3><code>[tree]</code> — the file tree's layout</h3>
+        <pre><span class="tbl">[tree]</span>
+<span class="c"># layout = "groups"    # or "directories" — the layout drift starts in</span></pre>
+        <p>By default the tree groups the changes by what each file is:
+        <b>code</b> first, then <b>tests</b>, <b>docs</b>, <b>config</b>,
+        <b>dependencies</b> (manifests), and <b>generated</b> output last,
+        each group over its own directory tree with how much of it is
+        reviewed. The rules go by path alone, so they work for any
+        language. <kbd>f</kbd> flips to the plain directory tree and back
+        at any time; this setting only picks the one you start in.</p>
       </section>
 
       <section id="config-picker">

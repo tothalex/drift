@@ -44,6 +44,33 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                     ];
                     Line::from(spans)
                 }
+                NodeKind::Group {
+                    expanded, files, ..
+                } => {
+                    // A review group: its name and how far its review
+                    // got — generated files never count, as in the header.
+                    let reviewable: Vec<usize> = files
+                        .iter()
+                        .copied()
+                        .filter(|&index| !app.is_generated(index))
+                        .collect();
+                    let done = reviewable.iter().filter(|&&i| app.is_checked(i)).count();
+                    let count = match (done, reviewable.len()) {
+                        (_, 0) => files.len().to_string(),
+                        (0, total) => total.to_string(),
+                        (done, total) => format!("{done}/{total}"),
+                    };
+                    let mut spans = vec![Span::styled(
+                        format!("{indent}{} ", if *expanded { '▾' } else { '▸' }),
+                        Style::default().fg(theme.muted),
+                    )];
+                    spans.extend(label(Style::default().add_modifier(Modifier::BOLD)));
+                    spans.push(Span::styled(
+                        format!(" {count}"),
+                        Style::default().fg(theme.muted),
+                    ));
+                    Line::from(spans)
+                }
                 NodeKind::Dir { expanded, .. } => {
                     let mut spans = vec![Span::styled(
                         format!("{indent}{} ", if *expanded { '▾' } else { '▸' }),
@@ -157,6 +184,8 @@ pub fn draw_path_tooltip(frame: &mut Frame, app: &App) {
     let (label, path) = if let Some(index) = virtual_index {
         let label = app.virtual_label(index);
         (label.clone(), label)
+    } else if matches!(node.kind, crate::tree::NodeKind::Group { .. }) {
+        (node.label.clone(), node.label.clone()) // its path is internal
     } else {
         (node.label.clone(), node.path.clone())
     };

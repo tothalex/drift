@@ -38,9 +38,11 @@ use crate::events::{
 };
 use crate::forge::model::{Anchor, ComposeTarget, PrData, PrDetail, PullRequest, Side};
 use crate::forge::{self, Forge, ForgeConfig, ForgeError};
+use crate::group;
 use crate::keymap::{Action, Keymap};
 use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
+use crate::tree::{FileTree, Layout};
 use crate::ui::CODE_GUTTER;
 use crate::vcs::model::{
     ChangedFile, CommitDetail, CommitInfo, Comparison, FileDiff, LineKind, RevisionId, Scope,
@@ -258,6 +260,9 @@ pub struct App {
     /// Review checks parked per worktree, so bouncing between agents
     /// doesn't lose what you already ticked off in each.
     checks_by_target: HashMap<RowId, Review>,
+    /// How the tree arranges the files: review groups (code, tests,
+    /// docs…) or plain directories.
+    tree_layout: Layout,
     /// Files of the list that are machine-written (lockfiles, codegen):
     /// dimmed in the tree and stepped over by file navigation.
     generated: HashSet<PathBuf>,
@@ -327,6 +332,7 @@ impl App {
             picker_search: String::new(),
             picker_search_input: false,
             checks_by_target: HashMap::new(),
+            tree_layout: config.tree_layout,
             generated: HashSet::new(),
             quit: false,
         };
@@ -871,6 +877,7 @@ impl App {
             Action::NextFile => self.move_file(count)?,
             Action::PrevFile => self.move_file(-count)?,
             Action::ToggleDir => self.nav.toggle_dir(),
+            Action::GroupFiles => self.toggle_grouping()?,
             Action::CursorDown => self.move_focused(count)?,
             Action::CursorUp => self.move_focused(-count)?,
             Action::JumpDown => self.move_focused(15 * count)?,
@@ -1763,7 +1770,7 @@ impl App {
         // cursor and collapsed dirs, the shown file stays shown, and its
         // code cursor re-anchors by line number.
         self.nav
-            .rebuild_preserving(&self.files, self.tree_viewport());
+            .rebuild_preserving(self.build_tree(), self.tree_viewport());
         self.restore_place(current_path, lineno)?;
         self.start_prefetch();
         Ok(())
@@ -2653,9 +2660,32 @@ impl App {
     /// Start a fresh tree over the file list, on its first file that
     /// isn't generated — nobody opens a review to read a lockfile.
     fn rebuild_tree(&mut self) {
+        let tree = self.build_tree();
         let (files, generated) = (&self.files, &self.generated);
         self.nav
-            .rebuild(files, |index| generated.contains(&files[index].path));
+            .rebuild(tree, |index| generated.contains(&files[index].path));
+    }
+
+    /// The file list as a tree, in the layout the reviewer picked.
+    fn build_tree(&self) -> FileTree {
+        match self.tree_layout {
+            Layout::Groups => FileTree::build_grouped(
+                &self.files,
+                &group::by_kind(&self.files, |index| {
+                    self.generated.contains(&self.files[index].path)
+                }),
+            ),
+            Layout::Directories => FileTree::build(&self.files),
+        }
+    }
+
+    /// `f`: flip the tree between review groups and directories, the
+    /// cursor staying on its file.
+    fn toggle_grouping(&mut self) -> Result<()> {
+        self.tree_layout = self.tree_layout.other();
+        self.nav
+            .rebuild_preserving(self.build_tree(), self.tree_viewport());
+        self.sync_current()
     }
 
     /// Mark the list's generated files: the repository's attributes
@@ -2707,7 +2737,7 @@ impl App {
         self.set_local_files(files);
         self.verify_checks();
         self.nav
-            .rebuild_preserving(&self.files, self.tree_viewport());
+            .rebuild_preserving(self.build_tree(), self.tree_viewport());
         self.cache.reset();
         self.restore_place(current_path, lineno)?;
         self.start_prefetch();
@@ -2816,7 +2846,7 @@ impl App {
         let (current_path, anchor) = self.current_anchor();
         self.set_local_files(files);
         self.nav
-            .rebuild_preserving(&self.files, self.tree_viewport());
+            .rebuild_preserving(self.build_tree(), self.tree_viewport());
         let dirty: HashSet<PathBuf> = self.scan.dirty_paths.drain().collect();
         for path in &dirty {
             self.cache.remove(path);

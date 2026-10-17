@@ -127,6 +127,14 @@ base branch, kept live as you edit:
   you check it again. Only real changes count: saving identical
   content, or switching review scope, keeps the check. A name clipped
   by a narrow pane shows its full path in a tooltip under the cursor.
+- The tree groups the changes by what each file is: **code** first,
+  then **tests**, **docs**, **config**, **dependencies** (manifests),
+  and **generated** output last — each group a collapsible header over
+  its own directory tree, showing how much of it is reviewed (`2/5`).
+  The rules go by path alone, so they work for any language. `f`
+  switches to the plain directory tree and back, the cursor staying on
+  its file; `[tree] layout = "directories"` starts there instead (see
+  [Configuration](#configuration)).
 - Generated files — lockfiles (`Cargo.lock`, `package-lock.json`,
   `go.sum`, …), minified bundles, protobuf and `*.generated.*` output —
   recede in the tree, navigation steps over them (a review never opens
@@ -437,6 +445,15 @@ string = "#b8bb26"
 
 [rust]
 bracket = "#fe8019"
+```
+
+The file tree starts grouped by kind (code, tests, docs, config,
+dependencies, generated); `f` flips to plain directories and back.
+To start in directories:
+
+```toml
+[tree]
+layout = "directories"   # or "groups", the default
 ```
 
 Picker panels — the review board and the lists it chains into — are

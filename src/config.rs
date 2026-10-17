@@ -14,6 +14,7 @@ use crate::connect::{AgentConfig, Backend, TEMPLATE_DEFAULT};
 use crate::forge::ForgeConfig;
 use crate::keymap::{KEY_DEFAULTS, Keymap};
 use crate::theme::{THEME_DEFAULTS, THEME_LANG_DEFAULTS, Theme};
+use crate::tree::Layout;
 use crate::update::UpdateConfig;
 
 /// Default editor command: `{line}` and `{file}` are substituted; the
@@ -51,6 +52,9 @@ struct ConfigFile {
     /// The review board; see [`BoardSection`].
     #[serde(default)]
     board: BoardSection,
+    /// The file tree's layout; see [`TreeSection`].
+    #[serde(default)]
+    tree: TreeSection,
     /// The picker overlays' size ceiling; see [`PickerSection`].
     #[serde(default)]
     picker: PickerSection,
@@ -170,6 +174,27 @@ impl BoardSection {
     }
 }
 
+/// The `[tree]` section: how the file tree arranges the changes.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TreeSection {
+    /// "groups" | "directories" — the layout drift starts in. `f` flips
+    /// between them either way.
+    #[serde(default)]
+    layout: Option<String>,
+}
+
+impl TreeSection {
+    fn into_config(self) -> Result<Layout> {
+        match self.layout.as_deref() {
+            None => Ok(Layout::default()),
+            Some(name) => Layout::parse(name).ok_or_else(|| {
+                anyhow!("tree.layout must be \"groups\" or \"directories\"; not '{name}'")
+            }),
+        }
+    }
+}
+
 /// The `[picker]` section: how much of the terminal a picker panel may
 /// cover.
 #[derive(Debug, Default, Deserialize)]
@@ -282,6 +307,8 @@ pub struct Config {
     pub update: UpdateConfig,
     /// The review board's opening axis.
     pub board_first: BoardAxis,
+    /// The file tree's starting layout.
+    pub tree_layout: Layout,
     /// How much of the terminal a picker panel may cover.
     pub picker: PickerSize,
     pub keymap: Keymap,
@@ -347,6 +374,10 @@ pub(crate) fn load_at(path: &Path) -> Result<Config> {
         .picker
         .into_config()
         .with_context(|| format!("invalid [picker] in {}", path.display()))?;
+    let tree_layout = file
+        .tree
+        .into_config()
+        .with_context(|| format!("invalid [tree] in {}", path.display()))?;
     Ok(Config {
         base: file.base,
         editor: file.editor.unwrap_or_else(|| EDITOR_DEFAULT.to_string()),
@@ -356,6 +387,7 @@ pub(crate) fn load_at(path: &Path) -> Result<Config> {
         agent,
         update: file.update.into_config(),
         board_first,
+        tree_layout,
         picker,
         keymap,
         theme,
@@ -460,6 +492,13 @@ pub fn default_toml() -> String {
          # is the one it opens on.\n\
          # [board]\n\
          # first = \"worktrees\"     # or \"branches\"\n\n\
+         # The file tree groups the changes by what each file is —\n\
+         # code first, then tests, docs, config, dependencies, and\n\
+         # generated output last — each group over its own directory\n\
+         # tree; \"directories\" shows the plain directory tree instead.\n\
+         # f flips between the two; this is the one drift starts in.\n\
+         # [tree]\n\
+         # layout = \"groups\"        # or \"directories\"\n\n\
          # The most of the terminal a picker panel may cover — the\n\
          # review board and the lists it chains into (base branch,\n\
          # pull requests, agent targets). Panels are sized by what\n\
@@ -531,6 +570,23 @@ mod tests {
         );
         let err = parse("[board]\nfirst = \"tags\"").unwrap_err().to_string();
         assert!(err.contains("worktrees") && err.contains("'tags'"), "{err}");
+    }
+
+    #[test]
+    fn tree_layout_names_a_layout_or_errors() {
+        let parse = |toml: &str| {
+            toml::from_str::<ConfigFile>(toml)
+                .unwrap()
+                .tree
+                .into_config()
+        };
+        assert_eq!(parse("").unwrap(), Layout::Groups);
+        assert_eq!(
+            parse("[tree]\nlayout = \"directories\"").unwrap(),
+            Layout::Directories
+        );
+        let err = parse("[tree]\nlayout = \"flat\"").unwrap_err().to_string();
+        assert!(err.contains("groups") && err.contains("'flat'"), "{err}");
     }
 
     #[test]

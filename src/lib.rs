@@ -6,6 +6,7 @@ pub mod connect;
 pub mod doctor;
 pub mod events;
 pub mod forge;
+pub mod group;
 pub mod keymap;
 pub mod lang;
 pub mod processor;
