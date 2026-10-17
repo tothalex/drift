@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0](https://github.com/tothalex/drift/compare/v0.30.1...v0.31.0) - 2026-10-17
+
+### Added
+
+- review groups, stale checks and generated files in the tree ([#40](https://github.com/tothalex/drift/pull/40))
+
 ## [0.30.1](https://github.com/tothalex/drift/compare/v0.30.0...v0.30.1) - 2026-10-05
 
 ### Fixed
