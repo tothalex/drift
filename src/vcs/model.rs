@@ -124,6 +124,8 @@ pub enum FileDiff {
         hunks: Vec<Hunk>,
     },
     Binary,
+    /// A text change the forge left out as too large to send.
+    TooLarge,
 }
 
 #[derive(Debug, Clone)]

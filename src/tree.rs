@@ -3,15 +3,53 @@
 //! compacted (`src/vcs/git`), directories collapsible (expanded by default).
 //! Virtual entries — `#`-prefixed root paths like the PR conversation —
 //! pin above everything: they're about the whole changeset, not a file.
+//! The grouped layout puts a header per review group on top, each over
+//! its own files' directory tree.
 
 use std::collections::BTreeMap;
 
+use crate::group::{Group, Kind};
 use crate::vcs::model::{ChangedFile, FileStatus};
 
 /// Root paths starting with this are virtual entries (about the whole
 /// changeset, not a file) and pin above everything — the contract the
 /// PR session's conversation entry relies on.
 pub const VIRTUAL_PREFIX: char = '#';
+
+/// How the tree arranges the changed files: under review-group headers
+/// (code, tests, docs…), or as plain directories. `f` flips between
+/// them; `[tree] layout` picks the one drift starts in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Layout {
+    #[default]
+    Groups,
+    Directories,
+}
+
+impl Layout {
+    /// The layout `f` flips to.
+    pub fn other(self) -> Layout {
+        match self {
+            Layout::Groups => Layout::Directories,
+            Layout::Directories => Layout::Groups,
+        }
+    }
+
+    /// The `[tree] layout` config value naming this layout.
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::Groups => "groups",
+            Layout::Directories => "directories",
+        }
+    }
+
+    /// Parse the config value; `None` for anything else.
+    pub fn parse(name: &str) -> Option<Layout> {
+        [Layout::Groups, Layout::Directories]
+            .into_iter()
+            .find(|layout| layout.name() == name)
+    }
+}
 
 pub struct FileTree {
     nodes: Vec<Node>,
@@ -34,6 +72,17 @@ pub enum NodeKind {
         children: Vec<usize>,
         expanded: bool,
     },
+    /// A review group's header; collapses like a directory.
+    Group {
+        children: Vec<usize>,
+        expanded: bool,
+        /// Indices into the changed-files list, for its progress.
+        files: Vec<usize>,
+        kind: Kind,
+    },
+    /// The blank row above a group header, setting the groups apart.
+    /// Never a cursor stop.
+    Gap,
     /// Index into the changed-files list.
     File { index: usize, status: FileStatus },
 }
@@ -44,54 +93,123 @@ struct TmpDir {
     files: Vec<(String, usize, FileStatus)>,
 }
 
+impl TmpDir {
+    fn insert(&mut self, index: usize, file: &ChangedFile) {
+        let components: Vec<String> = file
+            .path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let Some((name, dirs)) = components.split_last() else {
+            return;
+        };
+        let mut cursor = self;
+        for dir in dirs {
+            cursor = cursor.dirs.entry(dir.clone()).or_default();
+        }
+        cursor.files.push((name.clone(), index, file.status));
+    }
+}
+
 impl FileTree {
     pub fn build(files: &[ChangedFile]) -> FileTree {
         let mut root = TmpDir::default();
         for (index, file) in files.iter().enumerate() {
-            let components: Vec<String> = file
-                .path
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .collect();
-            let Some((name, dirs)) = components.split_last() else {
-                continue;
-            };
-            let mut cursor = &mut root;
-            for dir in dirs {
-                cursor = cursor.dirs.entry(dir.clone()).or_default();
-            }
-            cursor.files.push((name.clone(), index, file.status));
+            root.insert(index, file);
         }
-
-        let mut tree = FileTree {
-            nodes: Vec::new(),
-            roots: Vec::new(),
-            visible: Vec::new(),
-        };
-        // Virtual entries first, above every directory and file.
-        let (virtuals, plain): (Vec<_>, Vec<_>) = std::mem::take(&mut root.files)
-            .into_iter()
-            .partition(|(name, ..)| name.starts_with(VIRTUAL_PREFIX));
-        root.files = plain;
-        for (label, index, status) in virtuals {
-            let id = tree.nodes.len();
-            tree.nodes.push(Node {
-                path: label.clone(),
-                label,
-                depth: 0,
-                kind: NodeKind::File { index, status },
-            });
-            tree.roots.push(id);
-        }
-        let rest = tree.convert(root, 0, "");
+        let mut tree = FileTree::empty();
+        tree.pin_virtuals(&mut root);
+        let rest = tree.convert(root, 0, "", "");
         tree.roots.extend(rest);
         tree.recompute_visible();
         tree
     }
 
+    /// The grouped layout: virtual entries pinned on top as always, then
+    /// each group's header over the directory tree of its files. Paths
+    /// of files stay their own — the cursor finds its file across a
+    /// layout switch — while a group's directories get scoped paths, so
+    /// `src` under one group collapses apart from `src` under another.
+    /// A single group would only head the plain tree, so it doesn't.
+    pub fn build_grouped(files: &[ChangedFile], groups: &[Group]) -> FileTree {
+        if groups.len() < 2 {
+            return FileTree::build(files);
+        }
+        let mut root = TmpDir::default();
+        for (index, file) in files.iter().enumerate() {
+            root.insert(index, file);
+        }
+        let mut tree = FileTree::empty();
+        tree.pin_virtuals(&mut root);
+        for group in groups {
+            if !tree.roots.is_empty() {
+                tree.nodes.push(Node {
+                    label: String::new(),
+                    path: format!("{VIRTUAL_PREFIX}gap:{}", group.label),
+                    depth: 0,
+                    kind: NodeKind::Gap,
+                });
+                tree.roots.push(tree.nodes.len() - 1);
+            }
+            let mut sub = TmpDir::default();
+            for &index in &group.files {
+                sub.insert(index, &files[index]);
+            }
+            let path = format!("{VIRTUAL_PREFIX}group:{}", group.label);
+            let id = tree.nodes.len();
+            tree.nodes.push(Node {
+                label: group.label.clone(),
+                path: path.clone(),
+                depth: 0,
+                kind: NodeKind::Group {
+                    children: Vec::new(),
+                    expanded: true,
+                    files: group.files.clone(),
+                    kind: group.kind,
+                },
+            });
+            let children = tree.convert(sub, 1, "", &format!("{path}/"));
+            let NodeKind::Group { children: slot, .. } = &mut tree.nodes[id].kind else {
+                unreachable!();
+            };
+            *slot = children;
+            tree.roots.push(id);
+        }
+        tree.recompute_visible();
+        tree
+    }
+
+    fn empty() -> FileTree {
+        FileTree {
+            nodes: Vec::new(),
+            roots: Vec::new(),
+            visible: Vec::new(),
+        }
+    }
+
+    /// Take the virtual entries out of the root and pin them first,
+    /// above every group, directory and file.
+    fn pin_virtuals(&mut self, root: &mut TmpDir) {
+        let (virtuals, plain): (Vec<_>, Vec<_>) = std::mem::take(&mut root.files)
+            .into_iter()
+            .partition(|(name, ..)| name.starts_with(VIRTUAL_PREFIX));
+        root.files = plain;
+        for (label, index, status) in virtuals {
+            let id = self.nodes.len();
+            self.nodes.push(Node {
+                path: label.clone(),
+                label,
+                depth: 0,
+                kind: NodeKind::File { index, status },
+            });
+            self.roots.push(id);
+        }
+    }
+
     /// Convert a temp dir's children to nodes (dirs first, both sorted);
-    /// returns their ids.
-    fn convert(&mut self, dir: TmpDir, depth: usize, prefix: &str) -> Vec<usize> {
+    /// returns their ids. `scope` prefixes directory paths only (see
+    /// [`FileTree::build_grouped`]).
+    fn convert(&mut self, dir: TmpDir, depth: usize, prefix: &str, scope: &str) -> Vec<usize> {
         let join = |label: &str| {
             if prefix.is_empty() {
                 label.to_string()
@@ -111,14 +229,14 @@ impl FileTree {
             let id = self.nodes.len();
             self.nodes.push(Node {
                 label,
-                path: path.clone(),
+                path: format!("{scope}{path}"),
                 depth,
                 kind: NodeKind::Dir {
                     children: Vec::new(),
                     expanded: true,
                 },
             });
-            let children = self.convert(sub, depth + 1, &path);
+            let children = self.convert(sub, depth + 1, &path, scope);
             let NodeKind::Dir { children: slot, .. } = &mut self.nodes[id].kind else {
                 unreachable!();
             };
@@ -148,6 +266,11 @@ impl FileTree {
                 if let NodeKind::Dir {
                     children,
                     expanded: true,
+                }
+                | NodeKind::Group {
+                    children,
+                    expanded: true,
+                    ..
                 } = &nodes[id].kind
                 {
                     walk(nodes, children, out);
@@ -176,8 +299,14 @@ impl FileTree {
     pub fn file_at(&self, i: usize) -> Option<usize> {
         match self.row(i)?.kind {
             NodeKind::File { index, .. } => Some(index),
-            NodeKind::Dir { .. } => None,
+            NodeKind::Dir { .. } | NodeKind::Group { .. } | NodeKind::Gap => None,
         }
+    }
+
+    /// Whether visible row `i` is a [`NodeKind::Gap`].
+    pub fn is_gap(&self, i: usize) -> bool {
+        self.row(i)
+            .is_some_and(|node| matches!(node.kind, NodeKind::Gap))
     }
 
     pub fn first_file_row(&self) -> Option<usize> {
@@ -190,7 +319,8 @@ impl FileTree {
         let Some(&id) = self.visible.get(i) else {
             return false;
         };
-        if let NodeKind::Dir { expanded, .. } = &mut self.nodes[id].kind
+        if let NodeKind::Dir { expanded, .. } | NodeKind::Group { expanded, .. } =
+            &mut self.nodes[id].kind
             && *expanded != want
         {
             *expanded = want;
@@ -221,6 +351,9 @@ impl FileTree {
                     NodeKind::Dir {
                         expanded: false,
                         ..
+                    } | NodeKind::Group {
+                        expanded: false,
+                        ..
                     }
                 )
             })
@@ -233,7 +366,8 @@ impl FileTree {
     pub fn collapse_paths(&mut self, paths: &[String]) {
         let mut changed = false;
         for node in &mut self.nodes {
-            if let NodeKind::Dir { expanded, .. } = &mut node.kind
+            if let NodeKind::Dir { expanded, .. } | NodeKind::Group { expanded, .. } =
+                &mut node.kind
                 && *expanded
                 && paths.contains(&node.path)
             {
@@ -252,7 +386,9 @@ impl FileTree {
         let Some(&id) = self.visible.get(i) else {
             return false;
         };
-        if let NodeKind::Dir { expanded, .. } = &mut self.nodes[id].kind {
+        if let NodeKind::Dir { expanded, .. } | NodeKind::Group { expanded, .. } =
+            &mut self.nodes[id].kind
+        {
             *expanded = !*expanded;
             self.recompute_visible();
             true
@@ -386,6 +522,83 @@ mod tests {
         // src stays collapsed: docs, b.md, src.
         assert_eq!(rebuilt.visible_len(), 3);
         assert_eq!(rebuilt.row_of_path("src/a.rs"), None);
+    }
+
+    fn group(label: &str, files: &[usize]) -> Group {
+        Group {
+            kind: Kind::ALL
+                .into_iter()
+                .find(|kind| kind.label() == label)
+                .unwrap_or(Kind::Code),
+            label: label.to_string(),
+            files: files.to_vec(),
+        }
+    }
+
+    #[test]
+    fn grouped_layout_heads_each_group_over_its_own_tree() {
+        let files = [
+            changed("#conversation"),
+            changed("src/app.rs"),
+            changed("src/app_test.rs"),
+            changed("tests/cli.rs"),
+        ];
+        let tree = FileTree::build_grouped(&files, &[group("code", &[1]), group("tests", &[2, 3])]);
+        assert_eq!(
+            labels(&tree),
+            vec![
+                (0, "#conversation".into()),
+                (0, "".into()),
+                (0, "code".into()),
+                (1, "src".into()),
+                (2, "app.rs".into()),
+                (0, "".into()),
+                (0, "tests".into()),
+                (1, "src".into()),
+                (2, "app_test.rs".into()),
+                (1, "tests".into()),
+                (2, "cli.rs".into()),
+            ]
+        );
+        // A gap sets each group apart from whatever comes before it.
+        assert!(tree.is_gap(1) && tree.is_gap(5));
+        assert!(!tree.is_gap(0) && !tree.is_gap(2));
+        // Files keep their own paths; a group's directories are scoped.
+        assert_eq!(tree.row_of_path("src/app_test.rs"), Some(8));
+        assert_eq!(tree.row_path(3), Some("#group:code/src"));
+        assert_eq!(tree.row_path(7), Some("#group:tests/src"));
+        assert_eq!(tree.file_at(2), None);
+    }
+
+    #[test]
+    fn a_lone_group_is_just_the_plain_tree() {
+        let files = [changed("src/a.rs"), changed("src/b.rs")];
+        let tree = FileTree::build_grouped(&files, &[group("code", &[0, 1])]);
+        assert_eq!(
+            labels(&tree),
+            vec![(0, "src".into()), (1, "a.rs".into()), (1, "b.rs".into())]
+        );
+    }
+
+    #[test]
+    fn a_group_collapses_like_a_directory_and_stays_so_across_rebuild() {
+        let files = [changed("src/a.rs"), changed("README.md")];
+        let groups = [group("code", &[0]), group("docs", &[1])];
+        let mut tree = FileTree::build_grouped(&files, &groups);
+        assert!(tree.toggle(0));
+        assert_eq!(
+            labels(&tree),
+            vec![
+                (0, "code".into()),
+                (0, "".into()),
+                (0, "docs".into()),
+                (1, "README.md".into())
+            ]
+        );
+
+        let mut rebuilt = FileTree::build_grouped(&files, &groups);
+        rebuilt.collapse_paths(&tree.collapsed_paths());
+        assert_eq!(rebuilt.visible_len(), 4);
     }
 
     #[test]

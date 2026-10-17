@@ -15,7 +15,7 @@ use crate::forge::model::{
     Anchor, Comment, CommentThread, PrData, PrDetail, PrFile, PullRequest, Side,
 };
 use crate::forge::{Forge, ForgeError, args, concat_arrays, run_cli};
-use crate::vcs::model::{ChangedFile, FileStatus};
+use crate::vcs::model::{ChangedFile, FileDiff, FileStatus};
 use crate::vcs::unidiff;
 
 pub struct GlabCli {
@@ -42,6 +42,10 @@ fn mr(number: u64, tail: &str) -> String {
 impl Forge for GlabCli {
     fn pr_noun(&self) -> &'static str {
         "merge request"
+    }
+
+    fn head_ref(&self, number: u64) -> String {
+        format!("merge-requests/{number}/head")
     }
 
     fn list_open(&self) -> Result<Vec<PullRequest>, ForgeError> {
@@ -302,9 +306,16 @@ struct ApiDiff {
     renamed_file: bool,
     #[serde(default)]
     deleted_file: bool,
-    /// Hunks-only unified diff text.
+    #[serde(default)]
+    a_mode: String,
+    #[serde(default)]
+    b_mode: String,
+    /// Hunks-only unified diff text — empty when GitLab left a large
+    /// file's out, whether or not it also says so with `too_large`.
     #[serde(default)]
     diff: String,
+    #[serde(default)]
+    too_large: bool,
 }
 
 fn parse_diffs(json: &str) -> Result<Vec<PrFile>, ForgeError> {
@@ -332,12 +343,25 @@ fn parse_diffs(json: &str) -> Result<Vec<PrFile>, ForgeError> {
                     path: PathBuf::from(path),
                     old_path: entry.renamed_file.then(|| PathBuf::from(&entry.old_path)),
                 },
-                diff: unidiff::parse(&entry.diff),
+                diff: diff_of(&entry),
             }
         })
         .collect();
     files.sort_by(|a, b| a.changed.path.cmp(&b.changed.path));
     Ok(files)
+}
+
+/// An entry's diff. GitLab sends an empty one for a file past its size
+/// limit, often without saying so, and an empty diff is only honest for
+/// a pure rename or a mode change. An empty new file reads the same as
+/// a large one; shown as too large, that is the cheaper mistake than a
+/// thousand-line file passing for unchanged.
+fn diff_of(entry: &ApiDiff) -> FileDiff {
+    let mode_only = !entry.new_file && !entry.deleted_file && entry.a_mode != entry.b_mode;
+    match entry.diff.is_empty() {
+        true if entry.too_large || !(entry.renamed_file || mode_only) => FileDiff::TooLarge,
+        _ => unidiff::parse(&entry.diff),
+    }
 }
 
 #[derive(Deserialize)]
@@ -480,6 +504,33 @@ mod tests {
         assert_eq!(detail.base_sha, "b1");
         assert_eq!(detail.start_sha.as_deref(), Some("s1"));
         assert_eq!(detail.body, "why not");
+    }
+
+    #[test]
+    fn an_empty_diff_is_a_left_out_file_unless_a_rename_or_mode_change() {
+        let json = r#"[
+            {"old_path":"big.ts","new_path":"big.ts","a_mode":"100644","b_mode":"100644","diff":""},
+            {"old_path":"big.test.ts","new_path":"big.test.ts","new_file":true,
+             "a_mode":"0","b_mode":"100644","diff":""},
+            {"old_path":"flagged.ts","new_path":"flagged.ts","a_mode":"100644","b_mode":"100644",
+             "renamed_file":true,"too_large":true,"diff":""},
+            {"old_path":"was.rs","new_path":"is.rs","renamed_file":true,
+             "a_mode":"100644","b_mode":"100644","diff":""},
+            {"old_path":"run.sh","new_path":"run.sh","a_mode":"100644","b_mode":"100755","diff":""}
+        ]"#;
+        let files = parse_diffs(json).unwrap();
+        let diff = |name: &str| {
+            &files
+                .iter()
+                .find(|f| f.changed.path.to_str() == Some(name))
+                .unwrap()
+                .diff
+        };
+        assert!(matches!(diff("big.ts"), FileDiff::TooLarge));
+        assert!(matches!(diff("big.test.ts"), FileDiff::TooLarge));
+        assert!(matches!(diff("flagged.ts"), FileDiff::TooLarge));
+        assert!(matches!(diff("is.rs"), FileDiff::Text { hunks } if hunks.is_empty()));
+        assert!(matches!(diff("run.sh"), FileDiff::Text { hunks } if hunks.is_empty()));
     }
 
     #[test]

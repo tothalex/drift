@@ -38,6 +38,7 @@ pub enum Action {
     AgentSend,
     CopyPath,
     ToggleTree,
+    GroupFiles,
     GrowTree,
     ShrinkTree,
     PickBoard,
@@ -81,6 +82,7 @@ pub const KEY_DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("yank", Action::Yank, &["y"]),
     ("agent_send", Action::AgentSend, &["s"]),
     ("toggle_tree", Action::ToggleTree, &["t"]),
+    ("group_files", Action::GroupFiles, &["f"]),
     ("grow_tree", Action::GrowTree, &[">"]),
     ("shrink_tree", Action::ShrinkTree, &["<"]),
     ("pick_board", Action::PickBoard, &["b"]),
@@ -195,7 +197,7 @@ const HELP: &[(&[Action], &str)] = &[
     ),
     (
         &[Action::NextFile, Action::PrevFile],
-        "next / previous file (skips reviewed)",
+        "next / previous file (skips reviewed, generated)",
     ),
     (&[Action::CheckFile], "check file as reviewed, go to next"),
     (&[Action::UncheckLast], "uncheck the last review, jump back"),
@@ -233,6 +235,10 @@ const HELP: &[(&[Action], &str)] = &[
         "fold / unfold the review thread (PR)",
     ),
     (&[Action::ToggleTree], "show / hide the file tree"),
+    (
+        &[Action::GroupFiles],
+        "tree layout: groups (code, tests, docs…) / directories",
+    ),
     (
         &[Action::GrowTree, Action::ShrinkTree],
         "resize panes (or drag the gap)",

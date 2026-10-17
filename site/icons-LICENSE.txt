@@ -1,0 +1,11 @@
+icons.woff2 is a 13-glyph subset of Symbols Nerd Font Mono, the icons
+drift draws in its file tree with `icons = true`:
+
+  Nerd Fonts (https://www.nerdfonts.com) — MIT License,
+    Copyright (c) 2014 Ryan L McIntyre
+  Codicons (https://github.com/microsoft/vscode-codicons) — group,
+    conversation and commit icons — CC BY 4.0, Copyright (c) Microsoft
+  Seti UI (https://github.com/jesseweed/seti-ui) — folder, TypeScript
+    and JSON icons — MIT License, Copyright (c) 2014 Jesse Weed
+  Octicons (https://github.com/primer/octicons) — Markdown icon —
+    MIT License, Copyright (c) GitHub Inc.

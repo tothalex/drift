@@ -1,6 +1,7 @@
 //! The VCS abstraction: providers implement [`Vcs`], the rest of the app
 //! consumes [`model`] types and never sees a concrete VCS.
 
+pub mod generated;
 pub mod gitoxide;
 pub mod model;
 pub mod unidiff;
@@ -62,10 +63,25 @@ pub trait Vcs {
     /// Structured diff for one file. Called lazily per selection.
     fn file_diff(&self, cmp: &Comparison, file: &ChangedFile) -> Result<FileDiff, VcsError>;
 
+    /// Content id (a blob hash) of the file's new side under the scoped
+    /// comparison — the version a review check is made against. Equal
+    /// ids mean unchanged content. `None` when there is no new side (a
+    /// deletion) or the provider can't tell, and such a check never
+    /// goes stale.
+    fn new_side_id(&self, _cmp: &Comparison, _file: &ChangedFile) -> Option<String> {
+        None
+    }
+
     /// The file's content on the old side of the comparison (at the
     /// ancestor). Best-effort: `None` when it didn't exist there or can't
     /// be read — callers degrade gracefully.
     fn file_at_ancestor(&self, cmp: &Comparison, file: &ChangedFile) -> Option<String>;
+
+    /// Whether the commit is in the local object store. Providers that
+    /// can't tell answer yes, so nothing is offered to fetch it.
+    fn has_commit(&self, _rev: &RevisionId) -> bool {
+        true
+    }
 
     /// The file's content at an arbitrary revision, if the object exists
     /// locally. Best-effort — the pull-request view uses it to recover
@@ -117,6 +133,14 @@ pub trait Vcs {
     /// convenience and not a count.
     fn work_tip(&self, _cmp: &Comparison) -> Option<RevisionId> {
         None
+    }
+
+    /// What the repository's attributes say about each file being
+    /// generated (`linguist-generated`), aligned with `files`: `Some`
+    /// when the attribute is set or unset for it, `None` when it is
+    /// unspecified — [`generated::is_generated`] decides those.
+    fn generated_attrs(&self, files: &[ChangedFile]) -> Vec<Option<bool>> {
+        vec![None; files.len()]
     }
 
     /// Of these root-relative paths, the ones the VCS does not ignore.

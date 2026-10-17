@@ -33,6 +33,10 @@
     --removed: #d75f87;       /* 168 */
     --thread: #87afd7;        /* 110 */
     --dir: #87afd7;           /* 110 — tree directory names */
+    --group: #d787d7;         /* 176 — review-group headers */
+    --tag: #d7af5f;           /* 179 — ↻ changed since checked */
+    --ic-ts: #519aba;         /* icons.rs — TypeScript, Markdown */
+    --ic-json: #cbcb41;       /* icons.rs — JSON */
     --emph-added-bg: #005f00;   /* 22 */
     --emph-removed-bg: #5f0000; /* 52 */
     --cursor-bg: #303030;     /* 236 */
@@ -103,6 +107,7 @@
      same identity the scrollspy lights when the section is on screen. */
   .nav nav a.active { color: var(--fg-bright); }
   .nav nav a[href="#diff"]:hover,   .nav nav a.active[href="#diff"]   { color: var(--added);  border-bottom-color: var(--added); }
+  .nav nav a[href="#groups"]:hover, .nav nav a.active[href="#groups"] { color: var(--group);  border-bottom-color: var(--group); }
   .nav nav a[href="#themes"]:hover, .nav nav a.active[href="#themes"] { color: var(--yellow); border-bottom-color: var(--yellow); }
   .nav nav a[href="#pr"]:hover,     .nav nav a.active[href="#pr"]     { color: var(--thread); border-bottom-color: var(--thread); }
   .nav nav a[href="#board"]:hover,  .nav nav a.active[href="#board"]  { color: var(--cyan);   border-bottom-color: var(--cyan); }
@@ -204,6 +209,24 @@
   .tree .m { color: var(--muted); } .tree .a { color: var(--added); }
   .tree .arrow { color: var(--muted); }
   .tree .dir { color: var(--dir); font-weight: 600; }
+  .tree .grp { color: var(--group); font-weight: 600; }
+  .tree .rule, .tree .gen { color: var(--muted); }
+  .tree .changed { color: var(--tag); }
+  /* drift's tree icons as `icons = true` draws them: a 13-glyph subset
+     of Symbols Nerd Font Mono (icons-LICENSE.txt). The box is measured
+     in the text font — two cells, icon and space, as in a terminal —
+     the glyph inside in the icon font. */
+  @font-face { font-family: "drift-icons"; src: url("icons.woff2") format("woff2"); font-display: block; }
+  .tree .ic { display: inline-block; width: 2ch; }
+  /* The glyphs are a full em wide; a terminal squeezes them into one
+     cell, so they are drawn smaller here to leave the space cell clear. */
+  .tree .ic i { font: normal 0.9em/1 "drift-icons"; }
+  .tree .ic.fold { color: var(--dir); }
+  .tree .ic.ts { color: var(--ic-ts); }
+  .tree .ic.json { color: var(--ic-json); }
+  .tree .ic.dim { color: var(--muted); }
+  /* A tree that is the whole demo: full width, never hidden. */
+  .tree.solo { width: auto; flex: 1; border-right: 0; }
   /* Reviewed files recede entirely behind a muted checkmark. */
   .badge { color: var(--muted); }
   .sb {
@@ -381,6 +404,7 @@
     .feature.flip .txt { order: 0; }
     .feature-body { padding-left: 20px; }
     .tree { display: none; }
+    .tree.solo { display: block; }
     .cols { min-width: 0; }
   }
   @media (max-width: 640px) {
@@ -408,6 +432,7 @@
     <a class="brand" href="./">drift<i>_</i></a>
     <nav>
       <a href="#diff">diff view</a>
+      <a href="#groups">groups</a>
       <a href="#themes">themes</a>
       <a href="#pr">pull requests</a>
       <a href="#board">worktrees</a>
@@ -428,12 +453,14 @@
         <div class="hdr">src/cart.ts  <span class="plus">+1</span> <span class="minus">−1</span></div>
         <div class="cols">
           <div class="tree">
-            <div class="trow"><span class="arrow">▾</span> <span class="dir">src</span><span class="arrow">/</span></div>
-            <div class="trow on">  <span class="m">M</span> cart.ts</div>
-            <div class="trow">  <span class="m">M</span> checkout.ts</div>
-            <div class="trow">  <span class="a">?</span> receipt.ts</div>
-            <div class="trow">  <span class="badge">✓</span> <span style="color:var(--muted)">api.ts</span></div>
-            <div class="trow"><span class="arrow">▸</span> <span class="dir">tests</span><span class="arrow">/</span></div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEAC4;</i></span>code</span> <span class="rule">────── 1/4</span></div>
+            <div class="trow">  <span class="arrow">▾</span> <span class="ic fold"><i>&#xE5FE;</i></span><span class="dir">src</span><span class="arrow">/</span></div>
+            <div class="trow on">    <span class="m">M</span> <span class="ic ts"><i>&#xE628;</i></span>cart.ts</div>
+            <div class="trow">    <span class="m">M</span> <span class="ic ts"><i>&#xE628;</i></span>checkout.ts</div>
+            <div class="trow">    <span class="a">?</span> <span class="ic ts"><i>&#xE628;</i></span>receipt.ts</div>
+            <div class="trow">    <span class="badge">✓</span> <span class="ic dim"><i>&#xE628;</i></span><span style="color:var(--muted)">api.ts</span></div>
+            <div class="trow"> </div>
+            <div class="trow"><span class="grp">▸ <span class="ic"><i>&#xEA79;</i></span>tests</span> <span class="rule">────────── 2</span></div>
           </div>
           <div class="code">
             <div class="row"><span class="g">8</span><span>  <span class="fn">total</span><span class="br">()</span><span class="pu">:</span> <span class="ty">number</span> <span class="br">{</span></span></div>
@@ -508,7 +535,53 @@
     </div>
   </section>
 
-  <section class="feature flip screen" id="themes">
+  <section class="feature flip screen" id="groups">
+    <div class="feature-body">
+    <div class="txt">
+      <p class="eyebrow">REVIEW FLOW</p>
+      <h2>Grouped by what each file is, checked off as you go</h2>
+      <p>The tree opens grouped — <b>code</b> first, then tests, docs,
+      config, dependencies, and generated output last — each group with
+      its own progress. <span class="k">H</span> / <span class="k">L</span>
+      walk file to file across them; <span class="k">f</span> flips to
+      plain directories. Lockfiles and other generated files recede, and
+      navigation steps over them.</p>
+      <p>Check a file off with <span class="k">x</span>. If your agent edits
+      it afterwards, the check drops and the file comes back marked
+      <span class="k">↻</span> — nothing slips past a review in progress.
+      <span class="dim">With a Nerd Font, <a href="docs.html#configuration">icons
+      = true</a> gives every group and file its icon.</span></p>
+    </div>
+    <div class="term">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="name">x check · H/L next file · f directories</span></div>
+      <div class="body">
+        <div class="hdr">files (2/5 reviewed)</div>
+        <div class="cols">
+          <div class="tree solo">
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEAC4;</i></span>code</span> <span class="rule">─────────────── 0/3</span></div>
+            <div class="trow">  <span class="arrow">▾</span> <span class="ic fold"><i>&#xE5FE;</i></span><span class="dir">src</span><span class="arrow">/</span></div>
+            <div class="trow on">    <span class="changed">↻</span> <span class="ic ts"><i>&#xE628;</i></span>cart.ts</div>
+            <div class="trow">    <span class="m">M</span> <span class="ic ts"><i>&#xE628;</i></span>models.ts</div>
+            <div class="trow">    <span class="a">?</span> <span class="ic ts"><i>&#xE628;</i></span>receipt.ts</div>
+            <div class="trow"> </div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEA79;</i></span>tests</span> <span class="rule">────────────── 1/1</span></div>
+            <div class="trow">  <span class="arrow">▾</span> <span class="ic fold"><i>&#xE5FE;</i></span><span class="dir">src</span><span class="arrow">/</span></div>
+            <div class="trow">    <span class="badge">✓</span> <span class="ic dim"><i>&#xE628;</i></span><span style="color:var(--muted)">cart.test.ts</span></div>
+            <div class="trow"> </div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEAA4;</i></span>docs</span> <span class="rule">─────────────── 1/1</span></div>
+            <div class="trow">  <span class="badge">✓</span> <span class="ic dim"><i>&#xF48A;</i></span><span style="color:var(--muted)">README.md</span></div>
+            <div class="trow"> </div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEBCF;</i></span>generated</span> <span class="rule">────────────── 1</span></div>
+            <div class="trow">  <span class="gen">M <span class="ic"><i>&#xE60B;</i></span>package-lock.json</span></div>
+          </div>
+        </div>
+        <div class="sb"><span class="seg">origin/main ← main</span><span>src/cart.ts changed since you checked it</span></div>
+      </div>
+    </div>
+    </div>
+  </section>
+
+  <section class="feature screen" id="themes">
     <div class="feature-body">
     <div class="txt">
       <p class="eyebrow">SYNTAX &amp; THEMES</p>
@@ -543,7 +616,7 @@
     </div>
   </section>
 
-  <section class="feature screen" id="pr">
+  <section class="feature flip screen" id="pr">
     <div class="feature-body">
     <div class="txt">
       <p class="eyebrow">PULL REQUESTS</p>
@@ -580,7 +653,7 @@
     </div>
   </section>
 
-  <section class="feature flip screen" id="board">
+  <section class="feature screen" id="board">
     <div class="feature-body">
     <div class="txt">
       <p class="eyebrow">WORKTREES</p>
@@ -641,7 +714,7 @@
     </div>
   </section>
 
-  <section class="feature screen" id="ai">
+  <section class="feature flip screen" id="ai">
     <div class="feature-body">
     <div class="txt">
       <p class="eyebrow">AI AGENTS</p>

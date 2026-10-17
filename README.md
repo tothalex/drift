@@ -114,14 +114,34 @@ base branch, kept live as you edit:
   unchanged comment blocks can be folded to a one-line summary.
 - Two-pane focus: `h` aims the cursor keys at the file tree, `l` at the
   code view (the lit-up header shows which; clicking a pane focuses it
-  too). `H`/`L` step between files, skipping ones checked off.
+  too). `H`/`L` step between files, skipping ones checked off and
+  generated ones.
 - Each pane keeps its own `/` search with match highlighting; `n`/`N`
   cycle the focused pane's matches — and in an unsearched code view
   they hop between the changes themselves, so large files navigate by
   edit, not by scrolling.
 - File tree with review progress: check files off as you go, navigation
-  skips what's done. A name clipped by a narrow pane shows its full
-  path in a tooltip under the cursor.
+  skips what's done. A check remembers the version it was made
+  against: when the file changes after it — an agent edits a file you
+  already reviewed — the check drops and the file is marked `↻` until
+  you check it again. Only real changes count: saving identical
+  content, or switching review scope, keeps the check. A name clipped
+  by a narrow pane shows its full path in a tooltip under the cursor.
+- The tree groups the changes by what each file is: **code** first,
+  then **tests**, **docs**, **config**, **dependencies** (manifests),
+  and **generated** output last — each group a collapsible header over
+  its own directory tree, showing how much of it is reviewed (`2/5`).
+  The rules go by path alone, so they work for any language, and a
+  changeset of a single kind keeps the plain tree. `f` switches to the
+  plain directory tree and back, the cursor staying on its file; `[tree] layout = "directories"` starts there instead (see
+  [Configuration](#configuration)).
+- Generated files — lockfiles (`Cargo.lock`, `package-lock.json`,
+  `go.sum`, …), minified bundles, protobuf and `*.generated.*` output —
+  recede in the tree, navigation steps over them (a review never opens
+  on one), and they don't count toward review progress; they're still a
+  `j`/`k` away. The repository has the final say through
+  `.gitattributes`: `linguist-generated` marks more files,
+  `-linguist-generated` opts one back in.
 - Vim-style keys (counts, `g`/`G`, visual mode, yank) and full mouse
   support (wheel per pane, click to place the cursor, drag-to-copy,
   pane resize).
@@ -183,7 +203,8 @@ drift lang remove rust
 ```
 
 Installing needs `git` and a C compiler — the only place drift uses
-either. A plugin lives in `~/.config/drift/languages/<name>/`:
+a compiler (and, besides the pull-request fetch prompt, `git`). A
+plugin lives in `~/.config/drift/languages/<name>/`:
 
 - `language.toml` — the manifest: language name, file extensions, the
   grammar repo pinned to a commit, and `block_kinds`, the grammar's
@@ -301,9 +322,19 @@ conversation in place:
   unchecked for a second look. Turn it off with `--no-viewed-sync` or
   `viewed_sync = false`. GitLab has no such API, so there the checks
   stay local to your session.
-- When the PR's commits exist locally (after any `git fetch`), diffs get
-  full syntax highlighting and block scoping; otherwise drift falls back
-  to the plain hunk view — no fetch is ever run for you.
+- When the PR's commits exist locally, diffs get full syntax
+  highlighting and block scoping. When they don't, drift offers to fetch
+  them: `y` runs `git fetch origin pull/<n>/head` (GitLab:
+  `merge-requests/<n>/head`) in the background — objects only, no branch
+  or worktree changes — and the views fill in when it lands; `n` keeps
+  the plain hunk view for that PR. Nothing is fetched without asking,
+  and the fetch never prompts for credentials in drift's terminal (ssh
+  runs in batch mode unless you configured your own ssh command).
+- Large pull requests open too: past GitHub's size limit for a whole
+  diff, drift loads it file by file. A single file the forge leaves out
+  as too large (GitHub and GitLab both do, for big lockfiles and
+  generated code) says so in place of its diff, rather than passing
+  for unchanged.
 
 drift talks to the forge through the official CLIs — [`gh`] for GitHub,
 [`glab`] for GitLab — so install the one for your forge and run its
@@ -407,8 +438,9 @@ language — rust, typescript, go, …) overrides any syntax color for
 that language only. A top-level `base = "…"` sets the default
 comparison branch. With a [Nerd Font](https://www.nerdfonts.com)
 terminal, `icons = true` (or `--icons` for one session) adds
-per-language file icons and folder glyphs to the tree — opt-in,
-because drift can't detect the terminal's font.
+per-language file icons and folder glyphs to the tree, an icon per
+review group, and icons for the pinned conversation and commit entries
+— opt-in, because drift can't detect the terminal's font.
 
 Colors layer in three steps: a base colorscheme, then `[theme]` /
 `[theme.<lang>]` overrides on top. The built-in colorscheme is
@@ -425,6 +457,15 @@ string = "#b8bb26"
 
 [rust]
 bracket = "#fe8019"
+```
+
+The file tree starts grouped by kind (code, tests, docs, config,
+dependencies, generated); `f` flips to plain directories and back.
+To start in directories:
+
+```toml
+[tree]
+layout = "directories"   # or "groups", the default
 ```
 
 Picker panels — the review board and the lists it chains into — are
@@ -459,4 +500,6 @@ cargo test
 
 Git repositories are read natively (via gitoxide) — the `git` binary is
 not required to review. Only `drift lang install`/`build` shell out to
-`git` and a C compiler, to fetch and compile grammar plugins.
+`git` and a C compiler, to fetch and compile grammar plugins — and the
+pull-request view's fetch prompt, to `git fetch` a PR's commits when you
+accept it.

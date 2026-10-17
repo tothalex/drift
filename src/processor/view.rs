@@ -6,6 +6,8 @@ use crate::vcs::model::DiffLine;
 #[derive(Debug)]
 pub enum FileView {
     Binary,
+    /// A text change whose diff the forge left out as too large.
+    TooLarge,
     /// Pure rename or mode change — no content difference.
     Unchanged,
     Sections {

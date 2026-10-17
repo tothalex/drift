@@ -196,6 +196,7 @@
     <a class="sub" href="#config-forge">[forge]</a>
     <a class="sub" href="#config-agent">[agent]</a>
     <a class="sub" href="#config-board">[board]</a>
+    <a class="sub" href="#config-tree">[tree]</a>
     <a class="sub" href="#config-picker">[picker]</a>
     <a class="sub" href="#config-update">[update]</a>
     <a href="#languages">Language plugins</a>
@@ -274,6 +275,14 @@
       a tooltip under the cursor; the <a href="#keys">review board</a>
       answers a clipped commit summary or branch name the same way, and
       an expanded row widens the panel to fit the summaries it holds.</p>
+      <p>Generated files — lockfiles (<code>Cargo.lock</code>,
+      <code>package-lock.json</code>, <code>go.sum</code>, …), minified
+      bundles, protobuf and <code>*.generated.*</code> output — recede in
+      the file tree, <kbd>H</kbd> / <kbd>L</kbd> step over them (a review
+      never opens on one), and they don't count toward review progress.
+      <code>.gitattributes</code> has the final say:
+      <code>linguist-generated</code> marks more files,
+      <code>-linguist-generated</code> opts one back in.</p>
     </section>
 
     <section id="keys">
@@ -289,9 +298,10 @@
         <tr><td>j / k</td><td>Move the cursor in the focused pane (clicking a line also moves it there).</td></tr>
         <tr><td>d / u</td><td>Jump 15 lines (also PageDown / PageUp).</td></tr>
         <tr><td>g / G</td><td>Jump to top / bottom; <code>10G</code> goes to line 10.</td></tr>
-        <tr><td>H / L</td><td>Previous / next file, skipping reviewed ones.</td></tr>
+        <tr><td>H / L</td><td>Previous / next file, skipping reviewed and generated ones.</td></tr>
         <tr><td>o</td><td>Open / close a folder (also Enter, Space).</td></tr>
         <tr><td>t</td><td>Show / hide the file tree.</td></tr>
+        <tr><td>f</td><td>Switch the tree between review groups — code, tests, docs, config, dependencies, generated, each over its own directory tree with its review progress — and plain directories. Starts grouped; see <a href="#config-tree"><code>[tree]</code></a>.</td></tr>
         <tr><td>&gt; / &lt;</td><td>Resize the panes (or drag the divider).</td></tr>
         <tr><td>/</td><td>Search the focused pane; <code>n</code> / <code>N</code> cycle matches — with no search active they hop between changes.</td></tr>
       </table>
@@ -303,7 +313,7 @@
         <tr><td>w</td><td>Peek the block under the cursor as it reads now — the code pane switches to the new side only, no deletions, new lines accented. Inside the peek <kbd>[</kbd> / <kbd>]</kbd> walk the enclosing blocks outward and back in; <kbd>w</kbd> again returns to the diff.</td></tr>
         <tr><td>z</td><td>Collapse / expand unchanged lines.</td></tr>
         <tr><td>C</td><td>Fold / unfold comment blocks.</td></tr>
-        <tr><td>x / X</td><td>Check a file off as reviewed / uncheck the last one. In a GitHub pull request this ticks the file as "viewed" there too.</td></tr>
+        <tr><td>x / X</td><td>Check a file off as reviewed / uncheck the last one. A file that changes after its check comes back unchecked, marked <code>↻</code>. In a GitHub pull request this ticks the file as "viewed" there too.</td></tr>
         <tr><td>v</td><td>Visual mode: select lines.</td></tr>
         <tr><td>y</td><td>Copy the line or selection.</td></tr>
         <tr><td>s</td><td>Send the line or selection to an <a href="#ai-agents">AI agent pane</a>.</td></tr>
@@ -339,7 +349,7 @@
         <tr><td>base = "main"</td><td>Default comparison branch; <code>--base</code> overrides, auto-detected if unset.</td></tr>
         <tr><td>colorscheme = "onedark"</td><td>Base palette: a built-in name or a file in <code>themes/</code> next to the config.</td></tr>
         <tr><td>editor = "nvim +{line}"</td><td>Editor command for <kbd>e</kbd>; <code>{file}</code> and <code>{line}</code> are substituted, and the path is appended when <code>{file}</code> is absent. E.g. <code>"code -g {file}:{line}"</code>.</td></tr>
-        <tr><td>icons = false</td><td>Nerd Font file icons in the tree. Opt-in — needs a <a href="https://www.nerdfonts.com">patched font</a> in the terminal, which drift can't detect; <code>--icons</code> turns it on for one session.</td></tr>
+        <tr><td>icons = false</td><td>Nerd Font icons in the tree: per-language file icons, folder glyphs, one per review group, and the pinned conversation / commit entries. Opt-in — needs a <a href="https://www.nerdfonts.com">patched font</a> in the terminal, which drift can't detect; <code>--icons</code> turns it on for one session.</td></tr>
       </table>
 
       <section id="config-keys">
@@ -430,6 +440,20 @@
         start on.</p>
       </section>
 
+      <section id="config-tree">
+        <h3><code>[tree]</code> — the file tree's layout</h3>
+        <pre><span class="tbl">[tree]</span>
+<span class="c"># layout = "groups"    # or "directories" — the layout drift starts in</span></pre>
+        <p>By default the tree groups the changes by what each file is:
+        <b>code</b> first, then <b>tests</b>, <b>docs</b>, <b>config</b>,
+        <b>dependencies</b> (manifests), and <b>generated</b> output last,
+        each group over its own directory tree with how much of it is
+        reviewed. The rules go by path alone, so they work for any
+        language, and a changeset of a single kind keeps the plain tree.
+        <kbd>f</kbd> flips to the plain directory tree and back
+        at any time; this setting only picks the one you start in.</p>
+      </section>
+
       <section id="config-picker">
         <h3><code>[picker]</code> — how much screen a panel may take</h3>
         <pre><span class="tbl">[picker]</span>
@@ -467,8 +491,9 @@
       in place when it's ready; <kbd>n</kbd> declines for the session.
       Files without an installed language review as plain hunks.</p>
       <p>The same works from the command line. Installing needs
-      <code>git</code> and a C compiler — the only place drift uses
-      either.</p>
+      <code>git</code> and a C compiler — the only place drift uses a
+      compiler (and, besides the pull-request fetch prompt,
+      <code>git</code>).</p>
       <pre><span class="p">$</span> drift lang install rust    <span class="c"># curated: bash, c, cpp, csharp, css, dockerfile,</span>
 <span class="c">                             #   go, html, java, javascript, json, lua, markdown,</span>
 <span class="c">                             #   php, python, ruby, rust, toml, tsx, typescript,</span>
@@ -545,10 +570,18 @@
       (<code>gh auth login --hostname git.corp.example</code>) and drift
       picks the forge from the repo's <code>origin</code> remote — see
       <a href="#config-forge">[forge]</a> for hosts naming neither.</p>
-      <p class="dim">When the PR's commits exist locally (after any
-      <code>git fetch</code>), diffs get full syntax highlighting and
-      block scoping; otherwise drift falls back to plain hunks — no fetch
-      is ever run for you.</p>
+      <p class="dim">When the PR's commits exist locally, diffs get full
+      syntax highlighting and block scoping. When they don't, drift
+      offers to fetch them: <kbd>y</kbd> runs <code>git fetch origin
+      pull/&lt;n&gt;/head</code> (GitLab:
+      <code>merge-requests/&lt;n&gt;/head</code>) in the background —
+      objects only, no branch or worktree changes — and the views fill in
+      when it lands; <kbd>n</kbd> keeps plain hunks for that PR. Nothing
+      is fetched without asking, and the fetch never prompts for
+      credentials in drift's terminal. Large pull requests open too: past GitHub's
+      size limit for a whole diff, drift loads it file by file, and a
+      single file the forge leaves out as too large says so in place of
+      its diff rather than passing for unchanged.</p>
     </section>
 
     <section id="ai-agents">
@@ -605,7 +638,8 @@
       <code>git</code> binary is not required to review. Only
       <code>drift lang install</code>/<code>build</code> shell out to
       <code>git</code> and a C compiler, to fetch and compile grammar
-      plugins.</p>
+      plugins — and the pull-request view's fetch prompt, to
+      <code>git fetch</code> a PR's commits when you accept it.</p>
     </section>
   </main>
 </div>

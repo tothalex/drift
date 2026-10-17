@@ -375,6 +375,85 @@ fn committed_scope_shows_only_committed_work() {
     assert_eq!(added, vec!["fn main() { println!(\"hi\"); }"]);
 }
 
+/// `git rev-parse <spec>`, trimmed.
+fn rev_parse(dir: &Path, spec: &str) -> String {
+    let out = Command::new("git")
+        .args(["rev-parse", spec])
+        .current_dir(dir)
+        .output()
+        .expect("failed to run git");
+    assert!(out.status.success(), "git rev-parse {spec} failed");
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+#[test]
+fn new_side_id_is_the_blob_id_of_the_scoped_new_side() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    let vcs = detect(dir).unwrap();
+    let mut cmp = vcs.comparison(Some("master")).unwrap();
+    let files = vcs.changed_files(&cmp).unwrap();
+    let lib = files
+        .iter()
+        .find(|f| f.path == Path::new("lib.rs"))
+        .unwrap();
+
+    // Untouched since its commit: the working copy hashes like git does.
+    let committed = rev_parse(dir, "HEAD:lib.rs");
+    assert_eq!(vcs.new_side_id(&cmp, lib), Some(committed.clone()));
+
+    write(dir, "lib.rs", "fn main() { println!(\"edited\"); }\n");
+    let edited = vcs.new_side_id(&cmp, lib).unwrap();
+    assert_ne!(edited, committed);
+
+    // The committed scope's new side ends at HEAD: the edit is invisible.
+    cmp.scope = Scope::Committed;
+    assert_eq!(vcs.new_side_id(&cmp, lib), Some(committed));
+}
+
+#[test]
+fn a_deleted_file_has_no_new_side_id() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    std::fs::remove_file(dir.join("lib.rs")).unwrap();
+    let vcs = detect(dir).unwrap();
+    let cmp = vcs.comparison(Some("master")).unwrap();
+    let files = vcs.changed_files(&cmp).unwrap();
+    let lib = files
+        .iter()
+        .find(|f| f.path == Path::new("lib.rs"))
+        .unwrap();
+
+    assert_eq!(lib.status, FileStatus::Deleted);
+    assert_eq!(vcs.new_side_id(&cmp, lib), None);
+}
+
+#[test]
+fn generated_attrs_follow_gitattributes() {
+    let tmp = fixture();
+    let dir = tmp.path();
+    write(
+        dir,
+        ".gitattributes",
+        "lib.rs linguist-generated\nnotes.txt -linguist-generated\n",
+    );
+    let vcs = detect(dir).unwrap();
+    let cmp = vcs.comparison(Some("master")).unwrap();
+    let files = vcs.changed_files(&cmp).unwrap();
+    let attrs = vcs.generated_attrs(&files);
+    let attr_of = |name: &str| {
+        let index = files
+            .iter()
+            .position(|f| f.path == Path::new(name))
+            .unwrap();
+        attrs[index]
+    };
+
+    assert_eq!(attr_of("lib.rs"), Some(true));
+    assert_eq!(attr_of("notes.txt"), Some(false));
+    assert_eq!(attr_of("untracked.rs"), None);
+}
+
 #[test]
 fn uncommitted_scope_matches_git_status() {
     let tmp = fixture();

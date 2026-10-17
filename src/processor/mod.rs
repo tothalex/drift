@@ -59,6 +59,7 @@ pub fn process(
 ) -> FileView {
     let hunks = match diff {
         FileDiff::Binary => return FileView::Binary,
+        FileDiff::TooLarge => return FileView::TooLarge,
         FileDiff::Text { hunks } if hunks.is_empty() => return FileView::Unchanged,
         FileDiff::Text { hunks } => hunks,
     };

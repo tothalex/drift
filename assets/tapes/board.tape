@@ -1,21 +1,21 @@
 # The review board: every worktree of the repo, then every branch —
 # and drilling into one of them without leaving the panel.
-# (expects a drift binary on PATH or DRIFT=/path/to/drift)
 # Regenerate:
 #   sh assets/tapes/setup-demo.sh
-#   DRIFT=$PWD/target/release/drift vhs assets/tapes/board.tape
+#   DRIFT=$PWD/target/release/drift sh assets/tapes/render.sh board
 
 Output assets/board.gif
 
 Set Shell zsh
 Set FontSize 15
+Set FontFamily "Menlo, Symbols Nerd Font Mono"
 Set Width 1200
 Set Height 640
 Set Padding 12
 Set Theme { "name": "onedark-dark", "background": "#000000", "foreground": "#abb2bf", "cursor": "#89ca78", "black": "#1e2127", "red": "#ef596f", "green": "#89ca78", "yellow": "#e5c07b", "blue": "#61afef", "magenta": "#d55fde", "cyan": "#2bbac5", "white": "#abb2bf", "brightBlack": "#5c6370", "brightRed": "#ef596f", "brightGreen": "#89ca78", "brightYellow": "#e5c07b", "brightBlue": "#61afef", "brightMagenta": "#d55fde", "brightCyan": "#2bbac5", "brightWhite": "#dcdfe4" }
 
 Hide
-Type "cd /tmp/drift-demo && alias drift=${DRIFT:-drift} && clear"
+Type "cd /tmp/drift-demo && alias drift='${DRIFT:-drift} --icons' && clear"
 Enter
 Show
 
@@ -23,7 +23,10 @@ Sleep 600ms
 Type@120ms "drift"
 Sleep 400ms
 Enter
-Sleep 2.5s
+Sleep 1.2s
+# Widen the tree (2 × 2%) so grouped names and icons fit.
+Type "2>"
+Sleep 1.3s
 
 # Every worktree, newest first, with what each one holds.
 Type "b"

@@ -8,6 +8,7 @@
 //! reason. The CLIs return JSON; parsing into [`model`] types happens in
 //! pure functions so they are testable from fixture strings.
 
+pub mod fetch;
 pub mod model;
 
 mod gh;
@@ -23,6 +24,10 @@ use model::{Anchor, CommentThread, PrData, PrDetail, PullRequest};
 pub trait Forge: Send + Sync {
     /// UI copy: "pull request" / "merge request".
     fn pr_noun(&self) -> &'static str;
+    /// The ref on `origin` holding the pull request's head commit, kept
+    /// by the forge even after the source branch is gone — what the
+    /// fetch prompt fetches.
+    fn head_ref(&self, number: u64) -> String;
     fn list_open(&self) -> Result<Vec<PullRequest>, ForgeError>;
     fn load(&self, number: u64) -> Result<PrData, ForgeError>;
     fn post_general(&self, number: u64, body: &str) -> Result<(), ForgeError>;

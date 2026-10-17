@@ -1,9 +1,11 @@
 #!/bin/sh
 # Build the fixture repo the demo tapes record against: a small TS shop
 # with committed history, working-tree edits, and an untracked file —
-# one of everything drift shows — plus the branches and linked
-# worktrees the review board lists. Idempotent; recreates
-# /tmp/drift-demo.
+# one of everything drift shows, a file of every review group (code,
+# tests, docs, dependencies, a generated lockfile) — plus the branches
+# and linked worktrees the review board lists, and the "agent edit" the
+# launch tape lands on a file already checked off. Idempotent;
+# recreates /tmp/drift-demo.
 set -e
 
 DEMO=/tmp/drift-demo
@@ -81,6 +83,47 @@ export function checkout(cart: Cart): string {
 }
 EOF
 
+cat > src/cart.test.ts <<'EOF'
+import { Cart } from "./cart";
+
+test("totals with tax", () => {
+  const cart = new Cart();
+  cart.add({ name: "tea", price: 10 });
+  expect(cart.total()).toBeCloseTo(12.7);
+});
+EOF
+
+cat > README.md <<'EOF'
+# shop
+
+A tiny cart for the drift demo.
+
+- `Cart` keeps the items and prices them.
+- `checkout()` turns a cart into a receipt.
+EOF
+
+cat > package.json <<'EOF'
+{
+  "name": "shop",
+  "version": "1.0.0",
+  "devDependencies": {
+    "typescript": "5.5.4"
+  }
+}
+EOF
+
+cat > package-lock.json <<'EOF'
+{
+  "name": "shop",
+  "lockfileVersion": 3,
+  "packages": {
+    "node_modules/typescript": {
+      "version": "5.5.4"
+    }
+  }
+}
+EOF
+
 printf '.claude/\nnode_modules/\n' > .gitignore
 
 git add -A
@@ -145,6 +188,26 @@ cat > src/receipt.ts <<'EOF'
 export function header(shop: string): string {
   return `--- ${shop} ---`;
 }
+EOF
+
+# The rest of the review groups: a test for the new label, a line of
+# docs, a new dev dependency and the lockfile it rewrites.
+cat >> src/cart.test.ts <<'EOF'
+
+test("the subtotal counts its items", () => {
+  const cart = new Cart();
+  cart.add({ name: "tea", price: 10 });
+  expect(cart.receipt()).toContain("Subtotal (1 items)");
+});
+EOF
+printf -- '- The receipt counts its items.\n' >> README.md
+perl -0pi -e 's/"typescript": "5\.5\.4"\n/"typescript": "5.5.4",\n    "vitest": "2.1.0"\n/' package.json
+perl -0pi -e 's/("version": "5\.5\.4"\n    \})/$1,\n    "node_modules\/vitest": {\n      "version": "2.1.0"\n    }/' package-lock.json
+
+# The "agent edit" the launch tape lands on src/cart.ts after checking it
+# off — kept under the gitignored .claude/, so it never shows itself.
+cat > .claude/agent-edit.sh <<'EOF'
+perl -0pi -e 's/i\.price \* 1\.27/i.price * TAX/; s/export class Cart \{/const TAX = 1.27;\n\nexport class Cart {/' /tmp/drift-demo/src/cart.ts
 EOF
 
 echo "fixture ready at $DEMO"

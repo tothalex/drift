@@ -5,9 +5,30 @@
 
 use ratatui::style::Color;
 
+use crate::group::Kind;
+
 /// nvim-tree's folder pair; painted in `theme.dir` like the name.
 pub const DIR_OPEN: &str = "\u{e5fe}";
 pub const DIR_CLOSED: &str = "\u{e5ff}";
+
+/// The pinned entries, in place of their `#`: codicons
+/// comment-discussion and git-commit.
+pub const CONVERSATION: &str = "\u{eac7}";
+pub const COMMIT: &str = "\u{eafc}";
+
+/// A review group's icon, painted in `theme.group` like its header.
+/// Codicons throughout, so the six read as one set: code, beaker,
+/// book, settings-gear, package, wand.
+pub fn group(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Code => "\u{eac4}",
+        Kind::Tests => "\u{ea79}",
+        Kind::Docs => "\u{eaa4}",
+        Kind::Config => "\u{eb51}",
+        Kind::Deps => "\u{eb29}",
+        Kind::Generated => "\u{ebcf}",
+    }
+}
 
 const FILE_DEFAULT: (&str, u32) = ("\u{f15b}", 0x9da5b3);
 

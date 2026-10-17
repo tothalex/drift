@@ -33,14 +33,16 @@ use ratatui::layout::Position;
 use crate::config::{Config, PickerSize};
 use crate::connect::{self, AgentTarget, SendContext};
 use crate::events::{
-    AppEvent, INPUT_POLL_MS, RefreshedComments, pop_keyboard_enhancement,
+    AppEvent, INPUT_POLL_MS, RefreshedComments, Scan, pop_keyboard_enhancement,
     push_keyboard_enhancement, spawn_input_thread, spawn_watcher_thread,
 };
 use crate::forge::model::{Anchor, ComposeTarget, PrData, PrDetail, PullRequest, Side};
 use crate::forge::{self, Forge, ForgeConfig, ForgeError};
+use crate::group;
 use crate::keymap::{Action, Keymap};
 use crate::processor::view::{FileView, FlatLine, ViewLine, char_to_byte};
 use crate::theme::Theme;
+use crate::tree::{FileTree, Layout};
 use crate::ui::CODE_GUTTER;
 use crate::vcs::model::{
     ChangedFile, CommitDetail, CommitInfo, Comparison, FileDiff, LineKind, RevisionId, Scope,
@@ -58,7 +60,7 @@ pub use picker::{
     Picker, PrPicker, RowId, ScopePicker, WorktreeBoard,
 };
 use pr::PrSession;
-use review::Review;
+use review::{Review, Stamp};
 use tree_nav::TreeNav;
 use view_cache::ViewCache;
 
@@ -104,6 +106,13 @@ impl ScanState {
         self.seq += 1;
         self.seq
     }
+}
+
+/// The fetch prompt's offer: which pull request, and the forge's ref
+/// for its head — shown, since that is exactly what `y` fetches.
+pub struct FetchOffer {
+    pub number: u64,
+    pub head_ref: String,
 }
 
 /// One in-flight forge request: everything about the wait, cleared as a
@@ -232,6 +241,14 @@ pub struct App {
     lang_declined: Vec<&'static str>,
     /// A language install running on a background thread, if any.
     lang_installing: Option<&'static str>,
+    /// The fetch prompt: the open pull request's head commit isn't in
+    /// the local clone, so its files can't be highlighted. `y` fetches,
+    /// `n`/Esc declines for the session; other keys act under it.
+    fetch_offer: Option<FetchOffer>,
+    /// Pull requests whose fetch was declined (or failed) this session.
+    fetch_declined: Vec<u64>,
+    /// The pull request being fetched on a background thread, if any.
+    fetch_running: Option<u64>,
     /// The in-app comment composer overlay, if open. It captures all
     /// keystrokes while set (like search input).
     compose: Option<Compose>,
@@ -258,6 +275,12 @@ pub struct App {
     /// Review checks parked per worktree, so bouncing between agents
     /// doesn't lose what you already ticked off in each.
     checks_by_target: HashMap<RowId, Review>,
+    /// How the tree arranges the files: review groups (code, tests,
+    /// docs…) or plain directories.
+    tree_layout: Layout,
+    /// Files of the list that are machine-written (lockfiles, codegen):
+    /// dimmed in the tree and stepped over by file navigation.
+    generated: HashSet<PathBuf>,
     quit: bool,
 }
 
@@ -311,6 +334,9 @@ impl App {
             lang_prompt: None,
             lang_declined: Vec::new(),
             lang_installing: None,
+            fetch_offer: None,
+            fetch_declined: Vec::new(),
+            fetch_running: None,
             compose: None,
             pending_delete: None,
             keyboard_enhanced: false,
@@ -324,6 +350,8 @@ impl App {
             picker_search: String::new(),
             picker_search_input: false,
             checks_by_target: HashMap::new(),
+            tree_layout: config.tree_layout,
+            generated: HashSet::new(),
             quit: false,
         };
         app.reload()?;
@@ -363,6 +391,11 @@ impl App {
     /// The language-install prompt to draw, if one is being offered.
     pub fn lang_prompt(&self) -> Option<&'static str> {
         self.lang_prompt
+    }
+
+    /// The fetch prompt to draw, if one is being offered.
+    pub fn fetch_offer(&self) -> Option<&FetchOffer> {
+        self.fetch_offer.as_ref()
     }
 
     /// The open pull-request session, if any.
@@ -540,8 +573,33 @@ impl App {
             .is_some_and(|f| self.review.contains(&f.path))
     }
 
+    /// A machine-written file (lockfile, codegen output).
+    pub fn is_generated(&self, file_index: usize) -> bool {
+        self.files
+            .get(file_index)
+            .is_some_and(|f| self.generated.contains(&f.path))
+    }
+
+    /// The file was checked off, then changed underneath the check.
+    pub fn is_changed_since_check(&self, file_index: usize) -> bool {
+        self.files
+            .get(file_index)
+            .is_some_and(|f| self.review.is_changed(&f.path))
+    }
+
+    /// Checked files among the reviewable ones (see [`Self::reviewable_count`]).
     pub fn checked_count(&self) -> usize {
-        self.review.count_in(&self.files)
+        let reviewable = self
+            .files
+            .iter()
+            .filter(|f| !self.generated.contains(&f.path));
+        self.review.count_in(reviewable)
+    }
+
+    /// The files progress counts toward: generated ones never need a
+    /// review, so they are neither part of the total nor of the count.
+    pub fn reviewable_count(&self) -> usize {
+        self.file_count() - self.generated.len()
     }
 
     /// Rows of the current view's flattening — the code cursor's range.
@@ -662,6 +720,7 @@ impl App {
                     Ok(())
                 }
                 AppEvent::LangInstalled { name, result } => self.on_lang_installed(name, result),
+                AppEvent::PrFetched { number, result } => self.on_pr_fetched(number, result),
                 AppEvent::UpdateAvailable { version } => {
                     // Never clobber a notice in use — loading states,
                     // errors and prompts all matter more.
@@ -768,8 +827,22 @@ impl App {
             }
             return Ok(());
         }
-        // The install prompt claims only its advertised keys; everything
-        // else keeps working under it (it's an offer, not a modal).
+        // The prompts claim only their advertised keys; everything else
+        // keeps working under them (they're offers, not modals).
+        if let Some(number) = self.fetch_offer.as_ref().map(|offer| offer.number) {
+            match key.code {
+                KeyCode::Char('y') => {
+                    self.start_pr_fetch(number);
+                    return Ok(());
+                }
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.fetch_declined.push(number);
+                    self.fetch_offer = None;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         if let Some(name) = self.lang_prompt {
             match key.code {
                 KeyCode::Char('y') => {
@@ -842,6 +915,7 @@ impl App {
             Action::NextFile => self.move_file(count)?,
             Action::PrevFile => self.move_file(-count)?,
             Action::ToggleDir => self.nav.toggle_dir(),
+            Action::GroupFiles => self.toggle_grouping()?,
             Action::CursorDown => self.move_focused(count)?,
             Action::CursorUp => self.move_focused(-count)?,
             Action::JumpDown => self.move_focused(15 * count)?,
@@ -1710,6 +1784,7 @@ impl App {
             Some(session) if same => session.collapsed,
             _ => HashSet::new(),
         };
+        self.offer_fetch(&data.detail);
         // Anchors, taken before anything moves.
         let (current_path, lineno) = self.current_anchor();
         self.pr = Some(PrSession { data, collapsed });
@@ -1720,9 +1795,10 @@ impl App {
         if let Some(viewed) = session.data.viewed.clone() {
             self.review.adopt(&self.files, &viewed);
         }
+        self.classify_generated();
         self.cache.reset();
         if !same {
-            self.nav.rebuild(&self.files);
+            self.rebuild_tree();
             self.current = None;
             self.code.reset_for_new_view();
             self.sync_current()?;
@@ -1733,7 +1809,7 @@ impl App {
         // cursor and collapsed dirs, the shown file stays shown, and its
         // code cursor re-anchors by line number.
         self.nav
-            .rebuild_preserving(&self.files, self.tree_viewport());
+            .rebuild_preserving(self.build_tree(), self.tree_viewport());
         self.restore_place(current_path, lineno)?;
         self.start_prefetch();
         Ok(())
@@ -1745,6 +1821,7 @@ impl App {
         if self.pr.take().is_none() {
             return Ok(());
         }
+        self.fetch_offer = None;
         self.notice = None;
         self.reload()
     }
@@ -2227,7 +2304,7 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) if in_tree => {
                 self.focus = Pane::Tree;
                 let row = (mouse.row - self.layout.tree_area.y) as usize + self.nav.offset();
-                if row < self.nav.tree.visible_len() {
+                if row < self.nav.tree.visible_len() && !self.nav.tree.is_gap(row) {
                     self.nav.set_cursor(row, tree_viewport);
                     if self.nav.selected_file().is_some() {
                         self.sync_current()?;
@@ -2263,7 +2340,7 @@ impl App {
         match self.focus {
             Pane::Tree => {
                 let viewport = self.tree_viewport();
-                self.nav.move_cursor(delta, viewport, |_| false);
+                self.nav.move_cursor(delta, viewport);
                 self.sync_current()?;
             }
             Pane::Code => {
@@ -2295,12 +2372,13 @@ impl App {
         let viewport = self.tree_viewport();
         let files = &self.files;
         let review = &self.review;
+        let generated = &self.generated;
         let skip = |file_index: usize| {
             files
                 .get(file_index)
-                .is_some_and(|f| review.contains(&f.path))
+                .is_some_and(|f| review.contains(&f.path) || generated.contains(&f.path))
         };
-        self.nav.move_cursor(delta, viewport, skip);
+        self.nav.move_file(delta, viewport, skip);
         self.sync_current()
     }
 
@@ -2432,7 +2510,11 @@ impl App {
             return self.move_file(1); // the commit message: on to its files
         }
         let path = self.files[index].path.clone();
-        let checked = self.review.toggle(&path);
+        let stamp = match self.pr.is_none() && !self.review.contains(&path) {
+            true => Stamp::read(self.vcs.as_ref(), &self.cmp, &self.files[index]),
+            false => None,
+        };
+        let checked = self.review.toggle(&path, stamp);
         if !pr::is_conversation(&self.files[index]) {
             self.sync_viewed(path, checked);
         }
@@ -2525,7 +2607,7 @@ impl App {
     /// reviewable with it. Runs cheaply before every draw, so the offer
     /// follows navigation (and PR sessions) by itself.
     fn update_lang_prompt(&mut self) {
-        if self.lang_installing.is_some() {
+        if self.lang_installing.is_some() || self.fetch_offer.is_some() {
             self.lang_prompt = None;
             return;
         }
@@ -2581,16 +2663,84 @@ impl App {
         Ok(())
     }
 
+    // --- pull-request fetches ---
+
+    /// Offer to fetch a pull request whose head commit isn't local —
+    /// without it nothing in it can be highlighted or block-scoped.
+    fn offer_fetch(&mut self, detail: &PrDetail) {
+        let number = detail.number;
+        let missing = !self.vcs.has_commit(&RevisionId(detail.head_sha.clone()));
+        let asked = self.fetch_declined.contains(&number) || self.fetch_running == Some(number);
+        self.fetch_offer = match (missing && !asked, self.forge()) {
+            (true, Ok(forge)) => Some(FetchOffer {
+                number,
+                head_ref: forge.head_ref(number),
+            }),
+            _ => None,
+        };
+    }
+
+    /// `y` on the fetch prompt: `git fetch` on a background thread —
+    /// reviewing continues meanwhile — the base commit too, when missing.
+    fn start_pr_fetch(&mut self, number: u64) {
+        let Some(offer) = self.fetch_offer.take() else {
+            return;
+        };
+        let base = self
+            .pr
+            .as_ref()
+            .map(|session| RevisionId(session.data.detail.base_sha.clone()))
+            .filter(|base| !self.vcs.has_commit(base))
+            .map(|base| base.0);
+        let root = self.vcs.root().to_path_buf();
+        self.fetch_running = Some(number);
+        self.notice = Some(format!("fetching #{number}…"));
+        let tx = self.events_tx.clone();
+        std::thread::spawn(move || {
+            let result = forge::fetch::fetch_pr(&root, &offer.head_ref, base.as_deref());
+            let _ = tx.send(AppEvent::PrFetched { number, result });
+        });
+    }
+
+    /// The fetch finished: with the sources local now, recompute the
+    /// views of the pull request still open — no forge round trip, and
+    /// the reviewer's place kept.
+    fn on_pr_fetched(&mut self, number: u64, result: Result<(), String>) -> Result<()> {
+        self.fetch_running = None;
+        if let Err(err) = result {
+            // Never re-offered: a failing fetch would loop the prompt.
+            self.fetch_declined.push(number);
+            self.notice = Some(format!("fetching #{number} failed: {err}"));
+            return Ok(());
+        }
+        self.notice = Some(format!("fetched #{number}"));
+        if self
+            .pr
+            .as_ref()
+            .is_some_and(|s| s.data.detail.number == number)
+        {
+            let (_, anchor) = self.current_anchor();
+            self.cache.reset();
+            if let Some(index) = self.current {
+                self.ensure_view(index)?;
+                self.reanchor_cursor(anchor);
+            }
+            self.start_prefetch();
+        }
+        Ok(())
+    }
+
     // --- view management ---
 
     /// Full reload: comparison stays, files and views recompute. Review
-    /// checks survive (they're keyed by path).
+    /// checks survive (they're keyed by path) unless their file changed.
     fn reload(&mut self) -> Result<()> {
         // A manual reload supersedes any in-flight live refresh.
         self.scan.cancel();
         let files = self.vcs.changed_files(&self.cmp)?;
         self.set_local_files(files);
-        self.nav.rebuild(&self.files);
+        self.verify_checks();
+        self.rebuild_tree();
         self.current = None;
         self.code.reset_for_new_view();
         self.cache.reset();
@@ -2611,6 +2761,79 @@ impl App {
             files.insert(0, commit::entry());
         }
         self.files = files;
+        self.classify_generated();
+    }
+
+    /// Start a fresh tree over the file list, on its first file that
+    /// isn't generated — nobody opens a review to read a lockfile.
+    fn rebuild_tree(&mut self) {
+        let tree = self.build_tree();
+        let (files, generated) = (&self.files, &self.generated);
+        self.nav
+            .rebuild(tree, |index| generated.contains(&files[index].path));
+    }
+
+    /// The file list as a tree, in the layout the reviewer picked.
+    fn build_tree(&self) -> FileTree {
+        match self.tree_layout {
+            Layout::Groups => FileTree::build_grouped(
+                &self.files,
+                &group::by_kind(&self.files, |index| {
+                    self.generated.contains(&self.files[index].path)
+                }),
+            ),
+            Layout::Directories => FileTree::build(&self.files),
+        }
+    }
+
+    /// `f`: flip the tree between review groups and directories, the
+    /// cursor staying on its file. Said out loud: with a single group
+    /// the two look the same.
+    fn toggle_grouping(&mut self) -> Result<()> {
+        self.tree_layout = self.tree_layout.other();
+        self.notice = Some(format!("tree: {}", self.tree_layout.name()));
+        self.nav
+            .rebuild_preserving(self.build_tree(), self.tree_viewport());
+        self.sync_current()
+    }
+
+    /// Mark the list's generated files: the repository's attributes
+    /// first, built-in lockfile and codegen names for the rest.
+    fn classify_generated(&mut self) {
+        let attrs = self.vcs.generated_attrs(&self.files);
+        self.generated = self
+            .files
+            .iter()
+            .zip(attrs)
+            .filter(|(file, attr)| vcs::generated::is_generated(&file.path, *attr))
+            .map(|(file, _)| file.path.clone())
+            .collect();
+    }
+
+    /// Re-read every stamped check's file and drop the ones that changed
+    /// since — the synchronous twin of the verdict a live scan brings.
+    fn verify_checks(&mut self) {
+        let stale = review::stale(
+            self.vcs.as_ref(),
+            &self.cmp,
+            &self.files,
+            self.review.snapshot(),
+        );
+        self.drop_stale_checks(stale);
+    }
+
+    /// Uncheck files that changed after they were checked, and say so:
+    /// the tree marks them, but they may be scrolled out of sight.
+    fn drop_stale_checks(&mut self, stale: Vec<(PathBuf, Stamp)>) {
+        let dropped = self.review.drop_stale(stale);
+        self.notice = match dropped.as_slice() {
+            [] => return,
+            [path] => Some(format!("{} changed since you checked it", path.display())),
+            many => Some(format!(
+                "{} checked files changed since you checked them",
+                many.len()
+            )),
+        };
     }
 
     /// Manual refresh (`r`): recompute all files and views, but keep the
@@ -2621,8 +2844,9 @@ impl App {
         let files = self.vcs.changed_files(&self.cmp)?;
         let (current_path, lineno) = self.current_anchor();
         self.set_local_files(files);
+        self.verify_checks();
         self.nav
-            .rebuild_preserving(&self.files, self.tree_viewport());
+            .rebuild_preserving(self.build_tree(), self.tree_viewport());
         self.cache.reset();
         self.restore_place(current_path, lineno)?;
         self.start_prefetch();
@@ -2689,18 +2913,15 @@ impl App {
         let refresh_cmp = std::mem::take(&mut self.scan.meta_pending);
         let root = self.vcs.root().to_path_buf();
         let cmp = self.cmp.clone();
+        let checks = self.review.snapshot();
         let tx = self.events_tx.clone();
         std::thread::spawn(move || {
-            let result = scan_status(&root, cmp, refresh_cmp);
+            let result = scan_status(&root, cmp, refresh_cmp, checks);
             let _ = tx.send(AppEvent::StatusReady { seq, result });
         });
     }
 
-    fn on_status_ready(
-        &mut self,
-        seq: u64,
-        result: Result<(Comparison, Vec<ChangedFile>), String>,
-    ) -> Result<()> {
+    fn on_status_ready(&mut self, seq: u64, result: Result<Scan, String>) -> Result<()> {
         if seq != self.scan.seq {
             return Ok(()); // superseded by a reload or base switch
         }
@@ -2713,9 +2934,10 @@ impl App {
         }
         self.scan.inflight = false;
         match result {
-            Ok((cmp, files)) => {
-                self.cmp = cmp;
-                self.apply_refresh(files)?;
+            Ok(scan) => {
+                self.cmp = scan.cmp;
+                self.drop_stale_checks(scan.stale);
+                self.apply_refresh(scan.files)?;
             }
             Err(err) => self.notice = Some(format!("refresh failed: {err}")),
         }
@@ -2733,8 +2955,8 @@ impl App {
         let (current_path, anchor) = self.current_anchor();
         self.set_local_files(files);
         self.nav
-            .rebuild_preserving(&self.files, self.tree_viewport());
-        let dirty: HashSet<PathBuf> = self.scan.dirty_paths.drain().collect();
+            .rebuild_preserving(self.build_tree(), self.tree_viewport());
+        let dirty = std::mem::take(&mut self.scan.dirty_paths);
         for path in &dirty {
             self.cache.remove(path);
         }
@@ -3213,7 +3435,8 @@ fn scan_status(
     root: &Path,
     cmp: Comparison,
     refresh_cmp: bool,
-) -> Result<(Comparison, Vec<ChangedFile>), String> {
+    checks: Vec<(PathBuf, Stamp)>,
+) -> Result<Scan, String> {
     let vcs = vcs::detect(root).map_err(|e| e.to_string())?;
     let mut cmp = if refresh_cmp {
         // A branch review re-resolves at its own branch, which also
@@ -3240,7 +3463,8 @@ fn scan_status(
         }
         Err(err) => return Err(err.to_string()),
     };
-    Ok((cmp, files))
+    let stale = review::stale(vcs.as_ref(), &cmp, &files, checks);
+    Ok(Scan { cmp, files, stale })
 }
 
 /// Rows of an agent prompt: when any row is an actual change, every row
@@ -3362,7 +3586,7 @@ mod tests {
     #[test]
     fn picking_the_open_worktree_keeps_its_review_checks_apart() {
         let mut app = two_branch_app();
-        app.review.toggle(Path::new("src/live.rs"));
+        app.review.toggle(Path::new("src/live.rs"), None);
         app.review_branch("feature", None).unwrap();
         assert!(!app.review.contains(Path::new("src/live.rs")));
 

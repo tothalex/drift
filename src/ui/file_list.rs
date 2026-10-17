@@ -15,7 +15,7 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
     let theme = &app.theme;
     let progress = match app.checked_count() {
         0 => format!("files ({})", app.file_count()),
-        done => format!("files ({done}/{} reviewed)", app.file_count()),
+        done => format!("files ({done}/{} reviewed)", app.reviewable_count()),
     };
     frame.render_widget(
         Paragraph::new(progress).style(header_style(theme, app.focused_pane() == Pane::Tree)),
@@ -38,12 +38,58 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                 // A virtual entry: the PR conversation, a commit's message.
                 NodeKind::File { index, .. } if app.is_virtual(*index) => {
                     let accent = Style::default().fg(theme.thread);
+                    // With icons, the entry's own glyph takes the `#`'s
+                    // place — the same two cells.
+                    let marker = match (app.icons, app.pr_session().is_some()) {
+                        (false, _) => "#",
+                        (true, true) => icons::CONVERSATION,
+                        (true, false) => icons::COMMIT,
+                    };
                     let spans = vec![
-                        Span::styled(format!("{indent}# "), accent),
+                        Span::styled(format!("{indent}{marker} "), accent),
                         Span::styled(app.virtual_label(*index), Style::default()),
                     ];
                     Line::from(spans)
                 }
+                NodeKind::Group {
+                    expanded,
+                    files,
+                    kind,
+                    ..
+                } => {
+                    // A review group: its name and how far its review
+                    // got — generated files never count, as in the header.
+                    let reviewable: Vec<usize> = files
+                        .iter()
+                        .copied()
+                        .filter(|&index| !app.is_generated(index))
+                        .collect();
+                    let done = reviewable.iter().filter(|&&i| app.is_checked(i)).count();
+                    let count = match (done, reviewable.len()) {
+                        (_, 0) => files.len().to_string(),
+                        (0, total) => total.to_string(),
+                        (done, total) => format!("{done}/{total}"),
+                    };
+                    let accent = Style::default().fg(theme.group);
+                    let muted = Style::default().fg(theme.muted);
+                    let mut glyph = format!("{indent}{} ", if *expanded { '▾' } else { '▸' });
+                    if app.icons {
+                        glyph.push_str(&format!("{} ", icons::group(*kind)));
+                    }
+                    // A rule out to the count at the pane's edge, so a
+                    // group reads as a section, not one more folder.
+                    let used = glyph.width() + node.label.width() + count.width() + 2;
+                    let rule = match (content.width as usize).saturating_sub(used) {
+                        0 => " ".to_string(),
+                        len => format!(" {} ", "─".repeat(len)),
+                    };
+                    let mut spans = vec![Span::styled(glyph, accent)];
+                    spans.extend(label(accent.add_modifier(Modifier::BOLD)));
+                    spans.push(Span::styled(rule, muted));
+                    spans.push(Span::styled(count, muted));
+                    Line::from(spans)
+                }
+                NodeKind::Gap => Line::default(),
                 NodeKind::Dir { expanded, .. } => {
                     let mut spans = vec![Span::styled(
                         format!("{indent}{} ", if *expanded { '▾' } else { '▸' }),
@@ -83,11 +129,32 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                     spans.extend(label(dim));
                     Line::from(spans)
                 }
-                NodeKind::File { status, .. } => {
-                    let mut spans = vec![Span::styled(
-                        format!("{indent}{} ", status.letter()),
-                        Style::default().fg(status_color(theme, *status)),
-                    )];
+                NodeKind::File { index, status } if app.is_generated(*index) => {
+                    // Machine-written: the row recedes like a checked one
+                    // but keeps its status letter — nobody reviewed it.
+                    let dim = Style::default().fg(theme.muted);
+                    let mut spans =
+                        vec![Span::styled(format!("{indent}{} ", status.letter()), dim)];
+                    if app.icons {
+                        spans.push(Span::styled(
+                            format!("{} ", icons::file(&node.label).0),
+                            dim,
+                        ));
+                    }
+                    spans.extend(label(dim));
+                    Line::from(spans)
+                }
+                NodeKind::File { index, status } => {
+                    // Checked, then changed: the status letter gives way
+                    // to a mark that it wants a second look.
+                    let marker = match app.is_changed_since_check(*index) {
+                        true => Span::styled(format!("{indent}↻ "), Style::default().fg(theme.tag)),
+                        false => Span::styled(
+                            format!("{indent}{} ", status.letter()),
+                            Style::default().fg(status_color(theme, *status)),
+                        ),
+                    };
+                    let mut spans = vec![marker];
                     if app.icons {
                         let (glyph, color) = icons::file(&node.label);
                         spans.push(Span::styled(
@@ -136,12 +203,14 @@ pub fn draw_path_tooltip(frame: &mut Frame, app: &App) {
     let (label, path) = if let Some(index) = virtual_index {
         let label = app.virtual_label(index);
         (label.clone(), label)
+    } else if matches!(node.kind, crate::tree::NodeKind::Group { .. }) {
+        (node.label.clone(), node.label.clone()) // its path is internal
     } else {
         (node.label.clone(), node.path.clone())
     };
     // Rows render as indent + a two-cell marker + the label, plus a
     // trailing slash on directories and a two-cell icon when enabled
-    // (virtual entries never get one).
+    // (a virtual entry's icon is its marker, so it adds nothing).
     let slash = usize::from(matches!(node.kind, crate::tree::NodeKind::Dir { .. }));
     let icon = usize::from(app.icons && virtual_index.is_none()) * 2;
     let row_width = node.depth * 2 + 2 + icon + label.as_str().width() + slash;
