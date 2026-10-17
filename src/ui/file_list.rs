@@ -60,17 +60,23 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                         (0, total) => total.to_string(),
                         (done, total) => format!("{done}/{total}"),
                     };
-                    let mut spans = vec![Span::styled(
-                        format!("{indent}{} ", if *expanded { '▾' } else { '▸' }),
-                        Style::default().fg(theme.muted),
-                    )];
-                    spans.extend(label(Style::default().add_modifier(Modifier::BOLD)));
-                    spans.push(Span::styled(
-                        format!(" {count}"),
-                        Style::default().fg(theme.muted),
-                    ));
+                    let accent = Style::default().fg(theme.group);
+                    let muted = Style::default().fg(theme.muted);
+                    let glyph = format!("{indent}{} ", if *expanded { '▾' } else { '▸' });
+                    // A rule out to the count at the pane's edge, so a
+                    // group reads as a section, not one more folder.
+                    let used = glyph.width() + node.label.width() + count.width() + 2;
+                    let rule = match (content.width as usize).saturating_sub(used) {
+                        0 => " ".to_string(),
+                        len => format!(" {} ", "─".repeat(len)),
+                    };
+                    let mut spans = vec![Span::styled(glyph, accent)];
+                    spans.extend(label(accent.add_modifier(Modifier::BOLD)));
+                    spans.push(Span::styled(rule, muted));
+                    spans.push(Span::styled(count, muted));
                     Line::from(spans)
                 }
+                NodeKind::Gap => Line::default(),
                 NodeKind::Dir { expanded, .. } => {
                     let mut spans = vec![Span::styled(
                         format!("{indent}{} ", if *expanded { '▾' } else { '▸' }),

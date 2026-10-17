@@ -131,9 +131,9 @@ base branch, kept live as you edit:
   then **tests**, **docs**, **config**, **dependencies** (manifests),
   and **generated** output last — each group a collapsible header over
   its own directory tree, showing how much of it is reviewed (`2/5`).
-  The rules go by path alone, so they work for any language. `f`
-  switches to the plain directory tree and back, the cursor staying on
-  its file; `[tree] layout = "directories"` starts there instead (see
+  The rules go by path alone, so they work for any language, and a
+  changeset of a single kind keeps the plain tree. `f` switches to the
+  plain directory tree and back, the cursor staying on its file; `[tree] layout = "directories"` starts there instead (see
   [Configuration](#configuration)).
 - Generated files — lockfiles (`Cargo.lock`, `package-lock.json`,
   `go.sum`, …), minified bundles, protobuf and `*.generated.*` output —

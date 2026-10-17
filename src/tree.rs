@@ -79,6 +79,9 @@ pub enum NodeKind {
         /// Indices into the changed-files list, for its progress.
         files: Vec<usize>,
     },
+    /// The blank row above a group header, setting the groups apart.
+    /// Never a cursor stop.
+    Gap,
     /// Index into the changed-files list.
     File { index: usize, status: FileStatus },
 }
@@ -126,7 +129,11 @@ impl FileTree {
     /// of files stay their own — the cursor finds its file across a
     /// layout switch — while a group's directories get scoped paths, so
     /// `src` under one group collapses apart from `src` under another.
+    /// A single group would only head the plain tree, so it doesn't.
     pub fn build_grouped(files: &[ChangedFile], groups: &[Group]) -> FileTree {
+        if groups.len() < 2 {
+            return FileTree::build(files);
+        }
         let mut root = TmpDir::default();
         for (index, file) in files.iter().enumerate() {
             root.insert(index, file);
@@ -134,6 +141,15 @@ impl FileTree {
         let mut tree = FileTree::empty();
         tree.pin_virtuals(&mut root);
         for group in groups {
+            if !tree.roots.is_empty() {
+                tree.nodes.push(Node {
+                    label: String::new(),
+                    path: format!("{VIRTUAL_PREFIX}gap:{}", group.label),
+                    depth: 0,
+                    kind: NodeKind::Gap,
+                });
+                tree.roots.push(tree.nodes.len() - 1);
+            }
             let mut sub = TmpDir::default();
             for &index in &group.files {
                 sub.insert(index, &files[index]);
@@ -281,8 +297,14 @@ impl FileTree {
     pub fn file_at(&self, i: usize) -> Option<usize> {
         match self.row(i)?.kind {
             NodeKind::File { index, .. } => Some(index),
-            NodeKind::Dir { .. } | NodeKind::Group { .. } => None,
+            NodeKind::Dir { .. } | NodeKind::Group { .. } | NodeKind::Gap => None,
         }
+    }
+
+    /// Whether visible row `i` is a [`NodeKind::Gap`].
+    pub fn is_gap(&self, i: usize) -> bool {
+        self.row(i)
+            .is_some_and(|node| matches!(node.kind, NodeKind::Gap))
     }
 
     pub fn first_file_row(&self) -> Option<usize> {
@@ -520,9 +542,11 @@ mod tests {
             labels(&tree),
             vec![
                 (0, "#conversation".into()),
+                (0, "".into()),
                 (0, "code".into()),
                 (1, "src".into()),
                 (2, "app.rs".into()),
+                (0, "".into()),
                 (0, "tests".into()),
                 (1, "src".into()),
                 (2, "app_test.rs".into()),
@@ -530,11 +554,24 @@ mod tests {
                 (2, "cli.rs".into()),
             ]
         );
+        // A gap sets each group apart from whatever comes before it.
+        assert!(tree.is_gap(1) && tree.is_gap(5));
+        assert!(!tree.is_gap(0) && !tree.is_gap(2));
         // Files keep their own paths; a group's directories are scoped.
-        assert_eq!(tree.row_of_path("src/app_test.rs"), Some(6));
-        assert_eq!(tree.row_path(2), Some("#group:code/src"));
-        assert_eq!(tree.row_path(5), Some("#group:tests/src"));
-        assert_eq!(tree.file_at(1), None);
+        assert_eq!(tree.row_of_path("src/app_test.rs"), Some(8));
+        assert_eq!(tree.row_path(3), Some("#group:code/src"));
+        assert_eq!(tree.row_path(7), Some("#group:tests/src"));
+        assert_eq!(tree.file_at(2), None);
+    }
+
+    #[test]
+    fn a_lone_group_is_just_the_plain_tree() {
+        let files = [changed("src/a.rs"), changed("src/b.rs")];
+        let tree = FileTree::build_grouped(&files, &[group("code", &[0, 1])]);
+        assert_eq!(
+            labels(&tree),
+            vec![(0, "src".into()), (1, "a.rs".into()), (1, "b.rs".into())]
+        );
     }
 
     #[test]
@@ -547,6 +584,7 @@ mod tests {
             labels(&tree),
             vec![
                 (0, "code".into()),
+                (0, "".into()),
                 (0, "docs".into()),
                 (1, "README.md".into())
             ]
@@ -554,7 +592,7 @@ mod tests {
 
         let mut rebuilt = FileTree::build_grouped(&files, &groups);
         rebuilt.collapse_paths(&tree.collapsed_paths());
-        assert_eq!(rebuilt.visible_len(), 3);
+        assert_eq!(rebuilt.visible_len(), 4);
     }
 
     #[test]

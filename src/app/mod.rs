@@ -2264,7 +2264,7 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) if in_tree => {
                 self.focus = Pane::Tree;
                 let row = (mouse.row - self.layout.tree_area.y) as usize + self.nav.offset();
-                if row < self.nav.tree.visible_len() {
+                if row < self.nav.tree.visible_len() && !self.nav.tree.is_gap(row) {
                     self.nav.set_cursor(row, tree_viewport);
                     if self.nav.selected_file().is_some() {
                         self.sync_current()?;
@@ -2680,9 +2680,11 @@ impl App {
     }
 
     /// `f`: flip the tree between review groups and directories, the
-    /// cursor staying on its file.
+    /// cursor staying on its file. Said out loud: with a single group
+    /// the two look the same.
     fn toggle_grouping(&mut self) -> Result<()> {
         self.tree_layout = self.tree_layout.other();
+        self.notice = Some(format!("tree: {}", self.tree_layout.name()));
         self.nav
             .rebuild_preserving(self.build_tree(), self.tree_viewport());
         self.sync_current()

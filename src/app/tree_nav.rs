@@ -69,10 +69,10 @@ impl TreeNav {
         (0..self.tree.visible_len()).find(|&row| self.tree.file_at(row) == Some(file_index))
     }
 
-    /// Move the cursor `delta` rows, every row a stop. Stops at the
-    /// edges.
+    /// Move the cursor `delta` rows, every row but a group gap a stop.
+    /// Stops at the edges.
     pub fn move_cursor(&mut self, delta: isize, viewport: usize) {
-        self.step(delta, viewport, |_, _| true);
+        self.step(delta, viewport, |tree, row| !tree.is_gap(row));
     }
 
     /// Move the cursor `delta` files: directory and group rows are
@@ -111,8 +111,15 @@ impl TreeNav {
         self.keep_cursor_visible(viewport);
     }
 
+    /// Put the cursor on `row` — or, on a group gap, on the header
+    /// right below it.
     pub fn set_cursor(&mut self, row: usize, viewport: usize) {
-        self.cursor = row.min(self.tree.visible_len().saturating_sub(1));
+        let last = self.tree.visible_len().saturating_sub(1);
+        let row = row.min(last);
+        self.cursor = match self.tree.is_gap(row) {
+            true => (row + 1).min(last),
+            false => row,
+        };
         self.keep_cursor_visible(viewport);
     }
 
@@ -207,6 +214,33 @@ mod tests {
         // j/k still stop on every row.
         nav.move_cursor(1, 10);
         assert_eq!(at(&nav).as_deref(), Some("tests"));
+    }
+
+    #[test]
+    fn the_cursor_never_rests_on_a_group_gap() {
+        use crate::group::Group;
+        let files = [changed("src/a.rs"), changed("README.md")];
+        let groups = [
+            Group {
+                label: "code".into(),
+                files: vec![0],
+            },
+            Group {
+                label: "docs".into(),
+                files: vec![1],
+            },
+        ];
+        // Rows: code, src, a.rs, (gap), docs, README.md
+        let mut nav = TreeNav::new(&[]);
+        nav.rebuild(FileTree::build_grouped(&files, &groups), |_| false);
+        assert_eq!(nav.tree.row_path(nav.cursor), Some("src/a.rs"));
+
+        nav.move_cursor(1, 10);
+        assert_eq!(nav.tree.row_path(nav.cursor), Some("#group:docs"));
+        nav.move_cursor(-1, 10);
+        assert_eq!(nav.tree.row_path(nav.cursor), Some("src/a.rs"));
+        nav.set_cursor(3, 10); // `4G`, or a click, on the gap
+        assert_eq!(nav.tree.row_path(nav.cursor), Some("#group:docs"));
     }
 
     #[test]

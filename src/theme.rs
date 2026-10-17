@@ -33,6 +33,8 @@ pub struct Theme {
     pub tag: Color,
     /// Review-thread accents in the PR view: quote bars and authors.
     pub thread: Color,
+    /// Review-group headers in the grouped file tree.
+    pub group: Color,
     /// Search-hit highlight, in the tree and the code view alike.
     pub search: Color,
     /// Floating panels: the `?` overlay, pickers, the comment composer.
@@ -80,6 +82,7 @@ pub const THEME_DEFAULTS: &[(&str, &str)] = &[
     ("comment", "#7f848e"),
     ("tag", "179"),
     ("thread", "110"),
+    ("group", "176"),
     ("search", "179"),
     ("panel_bg", "235"),
     ("tooltip_bg", "darkgray"),
@@ -220,6 +223,7 @@ impl Theme {
             comment: resolve("comment")?,
             tag: resolve("tag")?,
             thread: resolve("thread")?,
+            group: resolve("group")?,
             search: resolve("search")?,
             panel_bg: resolve("panel_bg")?,
             tooltip_bg: resolve("tooltip_bg")?,
