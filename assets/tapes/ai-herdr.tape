@@ -5,12 +5,13 @@
 # plugin in the demo config dir. Regenerate from the repo root:
 #   sh assets/tapes/setup-demo.sh
 #   XDG_CONFIG_HOME=/tmp/drift-demo-xdg target/release/drift lang install typescript
-#   DRIFT=target/release/drift vhs assets/tapes/ai-herdr.tape
+#   DRIFT=$PWD/target/release/drift sh assets/tapes/render.sh ai-herdr
 
 Output assets/agent-herdr.gif
 
 Set Shell zsh
 Set FontSize 14
+Set FontFamily "Menlo, Symbols Nerd Font Mono"
 Set Width 1400
 Set Height 720
 Set Padding 10
@@ -51,12 +52,10 @@ Sleep 3s
 # Claude answers on the right.
 Sleep 24s
 
+# q quits drift, and the setup script stops the session behind it.
 Hide
 Type "q"
-Sleep 1s
-Type "herdr session stop drift-demo"
-Enter
-Sleep 2s
-Type "herdr session delete drift-demo"
+Sleep 4s
+Type "herdr session delete drift-demo 2>/dev/null; clear"
 Enter
 Sleep 1s

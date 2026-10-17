@@ -91,6 +91,11 @@ README GIFs are rendered with [vhs](https://github.com/charmbracelet/vhs)
 from the tapes in `assets/tapes/` against the fixture repo that
 `assets/tapes/setup-demo.sh` builds — regenerate them when the UI
 changes instead of screen-recording (each tape's header says how).
+Render through `assets/tapes/render.sh <tape>`: vhs 0.12.0 never
+writes its GIF (it renders with an already-cancelled context), and the
+script also strips herdr's and Claude Code's variables from the
+recording. Demo panes run plain `sh`, never the login shell — a shell
+config may start a multiplexer of its own and swallow the tape's keys.
 
 The website (`site/`, deployed by `pages.yml` to GitHub Pages) is plain
 HTML/CSS/JS with no dependencies. Every color on it must be a value

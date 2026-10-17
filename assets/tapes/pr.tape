@@ -1,7 +1,7 @@
 # Reviewing a pull request: threads, replies, the whole conversation.
 # Records against tothalex/gitdiff-demo PR #1 (private demo repo);
 # needs an authenticated gh. Regenerate:
-#   DRIFT=target/release/drift vhs assets/tapes/pr.tape
+#   DRIFT=$PWD/target/release/drift sh assets/tapes/render.sh pr
 
 Output assets/pr.gif
 
@@ -23,8 +23,8 @@ Type@110ms "drift --pr 1"
 Sleep 500ms
 Enter
 Sleep 5.5s
-# Widen the tree (4 × 2%) so grouped names and icons fit.
-Type "4>"
+# Widen the tree (2 × 2%) so grouped names and icons fit.
+Type "2>"
 Sleep 1.5s
 
 # Read the description, then walk to the change with the review thread.

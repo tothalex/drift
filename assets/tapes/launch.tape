@@ -2,9 +2,8 @@
 # kind, with Nerd Font icons; walking a change and its scope; checking a
 # file off, then an "agent edit" landing on it (it comes back marked);
 # flipping the tree to plain directories and back.
-# Regenerate:  sh assets/tapes/setup-demo.sh && vhs assets/tapes/launch.tape
-# (expects a drift binary on PATH or DRIFT=/path/to/drift, and Symbols
-# Nerd Font Mono installed for the icons)
+# Regenerate:  sh assets/tapes/setup-demo.sh && sh assets/tapes/render.sh launch
+# (DRIFT=/path/to/drift; Symbols Nerd Font Mono installed for the icons)
 
 Output assets/launch.gif
 
@@ -28,8 +27,8 @@ Type@120ms "drift"
 Sleep 500ms
 Enter
 Sleep 1.2s
-# Widen the tree (4 × 2%) so grouped names and icons fit.
-Type "4>"
+# Widen the tree (2 × 2%) so grouped names and icons fit.
+Type "2>"
 Sleep 1.3s
 
 # Walk the change, widen the scope and narrow it again.
