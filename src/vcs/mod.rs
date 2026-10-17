@@ -62,6 +62,15 @@ pub trait Vcs {
     /// Structured diff for one file. Called lazily per selection.
     fn file_diff(&self, cmp: &Comparison, file: &ChangedFile) -> Result<FileDiff, VcsError>;
 
+    /// Content id (a blob hash) of the file's new side under the scoped
+    /// comparison — the version a review check is made against. Equal
+    /// ids mean unchanged content. `None` when there is no new side (a
+    /// deletion) or the provider can't tell, and such a check never
+    /// goes stale.
+    fn new_side_id(&self, _cmp: &Comparison, _file: &ChangedFile) -> Option<String> {
+        None
+    }
+
     /// The file's content on the old side of the comparison (at the
     /// ancestor). Best-effort: `None` when it didn't exist there or can't
     /// be read — callers degrade gracefully.

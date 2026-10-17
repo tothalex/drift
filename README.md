@@ -120,8 +120,12 @@ base branch, kept live as you edit:
   they hop between the changes themselves, so large files navigate by
   edit, not by scrolling.
 - File tree with review progress: check files off as you go, navigation
-  skips what's done. A name clipped by a narrow pane shows its full
-  path in a tooltip under the cursor.
+  skips what's done. A check remembers the version it was made
+  against: when the file changes after it — an agent edits a file you
+  already reviewed — the check drops and the file is marked `↻` until
+  you check it again. Only real changes count: saving identical
+  content, or switching review scope, keeps the check. A name clipped
+  by a narrow pane shows its full path in a tooltip under the cursor.
 - Vim-style keys (counts, `g`/`G`, visual mode, yank) and full mouse
   support (wheel per pane, click to place the cursor, drag-to-copy,
   pane resize).

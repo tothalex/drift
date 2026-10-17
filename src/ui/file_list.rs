@@ -83,11 +83,17 @@ pub fn draw(frame: &mut Frame, app: &App, header: Rect, content: Rect) {
                     spans.extend(label(dim));
                     Line::from(spans)
                 }
-                NodeKind::File { status, .. } => {
-                    let mut spans = vec![Span::styled(
-                        format!("{indent}{} ", status.letter()),
-                        Style::default().fg(status_color(theme, *status)),
-                    )];
+                NodeKind::File { index, status } => {
+                    // Checked, then changed: the status letter gives way
+                    // to a mark that it wants a second look.
+                    let marker = match app.is_changed_since_check(*index) {
+                        true => Span::styled(format!("{indent}↻ "), Style::default().fg(theme.tag)),
+                        false => Span::styled(
+                            format!("{indent}{} ", status.letter()),
+                            Style::default().fg(status_color(theme, *status)),
+                        ),
+                    };
+                    let mut spans = vec![marker];
                     if app.icons {
                         let (glyph, color) = icons::file(&node.label);
                         spans.push(Span::styled(

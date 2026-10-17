@@ -145,6 +145,25 @@ impl GixVcs {
         }
     }
 
+    /// The file's content on the new side of the scoped comparison.
+    fn new_side(&self, cmp: &Comparison, file: &ChangedFile) -> Option<Vec<u8>> {
+        match &cmp.scope {
+            // A commit's new side is its own tree, not the working copy;
+            // committed work ends at HEAD.
+            Scope::Commit(rev) => self.blob_at(rev, &file.path),
+            Scope::Committed => self
+                .work_rev(cmp)
+                .ok()
+                .and_then(|tip| self.blob_at(&tip, &file.path)),
+            // The working copy is the new side only when the review is
+            // this worktree's own; a branch's ends at its tip.
+            _ => match &cmp.work {
+                Some(tip) => self.blob_at(tip, &file.path),
+                None => std::fs::read(self.root.join(&file.path)).ok(),
+            },
+        }
+    }
+
     /// The files a single commit changed, against its first parent (the
     /// empty tree for a root commit).
     fn commit_changed_files(&self, rev: &RevisionId) -> Result<Vec<ChangedFile>, VcsError> {
@@ -458,21 +477,7 @@ impl Vcs for GixVcs {
 
     fn file_diff(&self, cmp: &Comparison, file: &ChangedFile) -> Result<FileDiff, VcsError> {
         let old = self.old_side(cmp, file);
-        let new = match &cmp.scope {
-            // A commit's new side is its own tree, not the working copy;
-            // committed work ends at HEAD.
-            Scope::Commit(rev) => self.blob_at(rev, &file.path),
-            Scope::Committed => self
-                .work_rev(cmp)
-                .ok()
-                .and_then(|tip| self.blob_at(&tip, &file.path)),
-            // The working copy is the new side only when the review is
-            // this worktree's own; a branch's ends at its tip.
-            _ => match &cmp.work {
-                Some(tip) => self.blob_at(tip, &file.path),
-                None => std::fs::read(self.root.join(&file.path)).ok(),
-            },
-        };
+        let new = self.new_side(cmp, file);
         if is_binary(old.as_deref()) || is_binary(new.as_deref()) {
             return Ok(FileDiff::Binary);
         }
@@ -486,6 +491,16 @@ impl Vcs for GixVcs {
             .unwrap_or_default();
 
         Ok(compute_file_diff(&old_text, &new_text))
+    }
+
+    fn new_side_id(&self, cmp: &Comparison, file: &ChangedFile) -> Option<String> {
+        if file.status == FileStatus::Deleted {
+            return None;
+        }
+        let data = self.new_side(cmp, file)?;
+        let id = gix::objs::compute_hash(self.repo.object_hash(), gix::object::Kind::Blob, &data)
+            .ok()?;
+        Some(id.to_string())
     }
 
     fn file_at_ancestor(&self, cmp: &Comparison, file: &ChangedFile) -> Option<String> {

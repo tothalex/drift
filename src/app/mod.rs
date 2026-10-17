@@ -33,7 +33,7 @@ use ratatui::layout::Position;
 use crate::config::{Config, PickerSize};
 use crate::connect::{self, AgentTarget, SendContext};
 use crate::events::{
-    AppEvent, INPUT_POLL_MS, RefreshedComments, pop_keyboard_enhancement,
+    AppEvent, INPUT_POLL_MS, RefreshedComments, Scan, pop_keyboard_enhancement,
     push_keyboard_enhancement, spawn_input_thread, spawn_watcher_thread,
 };
 use crate::forge::model::{Anchor, ComposeTarget, PrData, PrDetail, PullRequest, Side};
@@ -58,7 +58,7 @@ pub use picker::{
     Picker, PrPicker, RowId, ScopePicker, WorktreeBoard,
 };
 use pr::PrSession;
-use review::Review;
+use review::{Review, Stamp};
 use tree_nav::TreeNav;
 use view_cache::ViewCache;
 
@@ -538,6 +538,13 @@ impl App {
         self.files
             .get(file_index)
             .is_some_and(|f| self.review.contains(&f.path))
+    }
+
+    /// The file was checked off, then changed underneath the check.
+    pub fn is_changed_since_check(&self, file_index: usize) -> bool {
+        self.files
+            .get(file_index)
+            .is_some_and(|f| self.review.is_changed(&f.path))
     }
 
     pub fn checked_count(&self) -> usize {
@@ -2432,7 +2439,11 @@ impl App {
             return self.move_file(1); // the commit message: on to its files
         }
         let path = self.files[index].path.clone();
-        let checked = self.review.toggle(&path);
+        let stamp = match self.pr.is_none() && !self.review.contains(&path) {
+            true => Stamp::read(self.vcs.as_ref(), &self.cmp, &self.files[index]),
+            false => None,
+        };
+        let checked = self.review.toggle(&path, stamp);
         if !pr::is_conversation(&self.files[index]) {
             self.sync_viewed(path, checked);
         }
@@ -2584,12 +2595,13 @@ impl App {
     // --- view management ---
 
     /// Full reload: comparison stays, files and views recompute. Review
-    /// checks survive (they're keyed by path).
+    /// checks survive (they're keyed by path) unless their file changed.
     fn reload(&mut self) -> Result<()> {
         // A manual reload supersedes any in-flight live refresh.
         self.scan.cancel();
         let files = self.vcs.changed_files(&self.cmp)?;
         self.set_local_files(files);
+        self.verify_checks();
         self.nav.rebuild(&self.files);
         self.current = None;
         self.code.reset_for_new_view();
@@ -2613,6 +2625,32 @@ impl App {
         self.files = files;
     }
 
+    /// Re-read every stamped check's file and drop the ones that changed
+    /// since — the synchronous twin of the verdict a live scan brings.
+    fn verify_checks(&mut self) {
+        let stale = review::stale(
+            self.vcs.as_ref(),
+            &self.cmp,
+            &self.files,
+            self.review.snapshot(),
+        );
+        self.drop_stale_checks(stale);
+    }
+
+    /// Uncheck files that changed after they were checked, and say so:
+    /// the tree marks them, but they may be scrolled out of sight.
+    fn drop_stale_checks(&mut self, stale: Vec<(PathBuf, Stamp)>) {
+        let dropped = self.review.drop_stale(stale);
+        self.notice = match dropped.as_slice() {
+            [] => return,
+            [path] => Some(format!("{} changed since you checked it", path.display())),
+            many => Some(format!(
+                "{} checked files changed since you checked them",
+                many.len()
+            )),
+        };
+    }
+
     /// Manual refresh (`r`): recompute all files and views, but keep the
     /// reviewer's place — unlike [`Self::reload`], which starts over
     /// (new comparison, new PR, leaving a session).
@@ -2621,6 +2659,7 @@ impl App {
         let files = self.vcs.changed_files(&self.cmp)?;
         let (current_path, lineno) = self.current_anchor();
         self.set_local_files(files);
+        self.verify_checks();
         self.nav
             .rebuild_preserving(&self.files, self.tree_viewport());
         self.cache.reset();
@@ -2689,18 +2728,15 @@ impl App {
         let refresh_cmp = std::mem::take(&mut self.scan.meta_pending);
         let root = self.vcs.root().to_path_buf();
         let cmp = self.cmp.clone();
+        let checks = self.review.snapshot();
         let tx = self.events_tx.clone();
         std::thread::spawn(move || {
-            let result = scan_status(&root, cmp, refresh_cmp);
+            let result = scan_status(&root, cmp, refresh_cmp, checks);
             let _ = tx.send(AppEvent::StatusReady { seq, result });
         });
     }
 
-    fn on_status_ready(
-        &mut self,
-        seq: u64,
-        result: Result<(Comparison, Vec<ChangedFile>), String>,
-    ) -> Result<()> {
+    fn on_status_ready(&mut self, seq: u64, result: Result<Scan, String>) -> Result<()> {
         if seq != self.scan.seq {
             return Ok(()); // superseded by a reload or base switch
         }
@@ -2713,9 +2749,10 @@ impl App {
         }
         self.scan.inflight = false;
         match result {
-            Ok((cmp, files)) => {
-                self.cmp = cmp;
-                self.apply_refresh(files)?;
+            Ok(scan) => {
+                self.cmp = scan.cmp;
+                self.drop_stale_checks(scan.stale);
+                self.apply_refresh(scan.files)?;
             }
             Err(err) => self.notice = Some(format!("refresh failed: {err}")),
         }
@@ -3213,7 +3250,8 @@ fn scan_status(
     root: &Path,
     cmp: Comparison,
     refresh_cmp: bool,
-) -> Result<(Comparison, Vec<ChangedFile>), String> {
+    checks: Vec<(PathBuf, Stamp)>,
+) -> Result<Scan, String> {
     let vcs = vcs::detect(root).map_err(|e| e.to_string())?;
     let mut cmp = if refresh_cmp {
         // A branch review re-resolves at its own branch, which also
@@ -3240,7 +3278,8 @@ fn scan_status(
         }
         Err(err) => return Err(err.to_string()),
     };
-    Ok((cmp, files))
+    let stale = review::stale(vcs.as_ref(), &cmp, &files, checks);
+    Ok(Scan { cmp, files, stale })
 }
 
 /// Rows of an agent prompt: when any row is an actual change, every row
@@ -3362,7 +3401,7 @@ mod tests {
     #[test]
     fn picking_the_open_worktree_keeps_its_review_checks_apart() {
         let mut app = two_branch_app();
-        app.review.toggle(Path::new("src/live.rs"));
+        app.review.toggle(Path::new("src/live.rs"), None);
         app.review_branch("feature", None).unwrap();
         assert!(!app.review.contains(Path::new("src/live.rs")));
 

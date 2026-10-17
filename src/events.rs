@@ -12,9 +12,19 @@ use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
 
+use crate::app::review::Stamp;
 use crate::forge::model::{Comment, CommentThread, PrData, PullRequest};
 use crate::processor::view::FileView;
 use crate::vcs::model::{ChangedFile, Comparison};
+
+/// A finished status scan: the comparison (re-resolved when git
+/// metadata moved), its change list, and the review checks whose file
+/// changed since it was checked.
+pub struct Scan {
+    pub cmp: Comparison,
+    pub files: Vec<ChangedFile>,
+    pub stale: Vec<(PathBuf, Stamp)>,
+}
 
 pub enum AppEvent {
     Input(crossterm::event::Event),
@@ -34,7 +44,7 @@ pub enum AppEvent {
     /// A background status scan finished; stale sequences are discarded.
     StatusReady {
         seq: u64,
-        result: Result<(Comparison, Vec<ChangedFile>), String>,
+        result: Result<Scan, String>,
     },
     /// The agent bridge answered for the review board — which panes
     /// exist and where they are working. Stale sequences are discarded.
