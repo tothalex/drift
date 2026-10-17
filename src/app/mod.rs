@@ -2300,7 +2300,7 @@ impl App {
         match self.focus {
             Pane::Tree => {
                 let viewport = self.tree_viewport();
-                self.nav.move_cursor(delta, viewport, |_| false);
+                self.nav.move_cursor(delta, viewport);
                 self.sync_current()?;
             }
             Pane::Code => {
@@ -2338,7 +2338,7 @@ impl App {
                 .get(file_index)
                 .is_some_and(|f| review.contains(&f.path) || generated.contains(&f.path))
         };
-        self.nav.move_cursor(delta, viewport, skip);
+        self.nav.move_file(delta, viewport, skip);
         self.sync_current()
     }
 

@@ -69,9 +69,22 @@ impl TreeNav {
         (0..self.tree.visible_len()).find(|&row| self.tree.file_at(row) == Some(file_index))
     }
 
-    /// Move the cursor, skipping rows whose file satisfies `skip`
-    /// (reviewed files). Stops at the edges.
-    pub fn move_cursor(&mut self, delta: isize, viewport: usize, skip: impl Fn(usize) -> bool) {
+    /// Move the cursor `delta` rows, every row a stop. Stops at the
+    /// edges.
+    pub fn move_cursor(&mut self, delta: isize, viewport: usize) {
+        self.step(delta, viewport, |_, _| true);
+    }
+
+    /// Move the cursor `delta` files: directory and group rows are
+    /// passed over, and so are files `skip` names (reviewed, generated).
+    /// Stays put when no such file lies that way.
+    pub fn move_file(&mut self, delta: isize, viewport: usize, skip: impl Fn(usize) -> bool) {
+        self.step(delta, viewport, |tree, row| {
+            tree.file_at(row).is_some_and(|index| !skip(index))
+        });
+    }
+
+    fn step(&mut self, delta: isize, viewport: usize, stop: impl Fn(&FileTree, usize) -> bool) {
         if self.tree.visible_len() == 0 {
             return;
         }
@@ -88,8 +101,7 @@ impl TreeNav {
                 if probe < 0 || probe > last {
                     break;
                 }
-                let skipped = self.tree.file_at(probe as usize).is_some_and(&skip);
-                if !skipped {
+                if stop(&self.tree, probe as usize) {
                     cursor = probe;
                     break;
                 }
@@ -166,6 +178,35 @@ mod tests {
 
         nav.rebuild(FileTree::build(&files), |_| true);
         assert_eq!(nav.tree.row_path(nav.cursor), Some("bun.lock"));
+    }
+
+    #[test]
+    fn move_file_lands_on_files_only() {
+        // Rows: src, src/a.rs, src/b.rs, tests, tests/c.rs, z.rs
+        let mut nav = TreeNav::new(&[
+            changed("src/a.rs"),
+            changed("src/b.rs"),
+            changed("tests/c.rs"),
+            changed("z.rs"),
+        ]);
+        let at = |nav: &TreeNav| nav.tree.row_path(nav.cursor).map(str::to_string);
+        assert_eq!(at(&nav).as_deref(), Some("src/a.rs"));
+
+        // Past the reviewed b.rs and the tests directory row.
+        nav.move_file(1, 10, |index| index == 1);
+        assert_eq!(at(&nav).as_deref(), Some("tests/c.rs"));
+        nav.move_file(2, 10, |_| false);
+        assert_eq!(at(&nav).as_deref(), Some("z.rs"));
+        // Nothing further: stay.
+        nav.move_file(1, 10, |_| false);
+        assert_eq!(at(&nav).as_deref(), Some("z.rs"));
+        // From a directory row, onward to its file.
+        nav.set_cursor(3, 10);
+        nav.move_file(-1, 10, |_| false);
+        assert_eq!(at(&nav).as_deref(), Some("src/b.rs"));
+        // j/k still stop on every row.
+        nav.move_cursor(1, 10);
+        assert_eq!(at(&nav).as_deref(), Some("tests"));
     }
 
     #[test]
