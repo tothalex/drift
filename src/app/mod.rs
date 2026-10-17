@@ -2956,7 +2956,7 @@ impl App {
         self.set_local_files(files);
         self.nav
             .rebuild_preserving(self.build_tree(), self.tree_viewport());
-        let dirty: HashSet<PathBuf> = self.scan.dirty_paths.drain().collect();
+        let dirty = std::mem::take(&mut self.scan.dirty_paths);
         for path in &dirty {
             self.cache.remove(path);
         }
