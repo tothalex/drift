@@ -108,6 +108,13 @@ impl ScanState {
     }
 }
 
+/// The fetch prompt's offer: which pull request, and the forge's ref
+/// for its head — shown, since that is exactly what `y` fetches.
+pub struct FetchOffer {
+    pub number: u64,
+    pub head_ref: String,
+}
+
 /// One in-flight forge request: everything about the wait, cleared as a
 /// unit when its response (matched by `seq`) lands.
 struct ForgeRequest {
@@ -234,6 +241,14 @@ pub struct App {
     lang_declined: Vec<&'static str>,
     /// A language install running on a background thread, if any.
     lang_installing: Option<&'static str>,
+    /// The fetch prompt: the open pull request's head commit isn't in
+    /// the local clone, so its files can't be highlighted. `y` fetches,
+    /// `n`/Esc declines for the session; other keys act under it.
+    fetch_offer: Option<FetchOffer>,
+    /// Pull requests whose fetch was declined (or failed) this session.
+    fetch_declined: Vec<u64>,
+    /// The pull request being fetched on a background thread, if any.
+    fetch_running: Option<u64>,
     /// The in-app comment composer overlay, if open. It captures all
     /// keystrokes while set (like search input).
     compose: Option<Compose>,
@@ -319,6 +334,9 @@ impl App {
             lang_prompt: None,
             lang_declined: Vec::new(),
             lang_installing: None,
+            fetch_offer: None,
+            fetch_declined: Vec::new(),
+            fetch_running: None,
             compose: None,
             pending_delete: None,
             keyboard_enhanced: false,
@@ -373,6 +391,11 @@ impl App {
     /// The language-install prompt to draw, if one is being offered.
     pub fn lang_prompt(&self) -> Option<&'static str> {
         self.lang_prompt
+    }
+
+    /// The fetch prompt to draw, if one is being offered.
+    pub fn fetch_offer(&self) -> Option<&FetchOffer> {
+        self.fetch_offer.as_ref()
     }
 
     /// The open pull-request session, if any.
@@ -697,6 +720,7 @@ impl App {
                     Ok(())
                 }
                 AppEvent::LangInstalled { name, result } => self.on_lang_installed(name, result),
+                AppEvent::PrFetched { number, result } => self.on_pr_fetched(number, result),
                 AppEvent::UpdateAvailable { version } => {
                     // Never clobber a notice in use — loading states,
                     // errors and prompts all matter more.
@@ -803,8 +827,22 @@ impl App {
             }
             return Ok(());
         }
-        // The install prompt claims only its advertised keys; everything
-        // else keeps working under it (it's an offer, not a modal).
+        // The prompts claim only their advertised keys; everything else
+        // keeps working under them (they're offers, not modals).
+        if let Some(number) = self.fetch_offer.as_ref().map(|offer| offer.number) {
+            match key.code {
+                KeyCode::Char('y') => {
+                    self.start_pr_fetch(number);
+                    return Ok(());
+                }
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.fetch_declined.push(number);
+                    self.fetch_offer = None;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         if let Some(name) = self.lang_prompt {
             match key.code {
                 KeyCode::Char('y') => {
@@ -1746,6 +1784,7 @@ impl App {
             Some(session) if same => session.collapsed,
             _ => HashSet::new(),
         };
+        self.offer_fetch(&data.detail);
         // Anchors, taken before anything moves.
         let (current_path, lineno) = self.current_anchor();
         self.pr = Some(PrSession { data, collapsed });
@@ -1782,6 +1821,7 @@ impl App {
         if self.pr.take().is_none() {
             return Ok(());
         }
+        self.fetch_offer = None;
         self.notice = None;
         self.reload()
     }
@@ -2567,7 +2607,7 @@ impl App {
     /// reviewable with it. Runs cheaply before every draw, so the offer
     /// follows navigation (and PR sessions) by itself.
     fn update_lang_prompt(&mut self) {
-        if self.lang_installing.is_some() {
+        if self.lang_installing.is_some() || self.fetch_offer.is_some() {
             self.lang_prompt = None;
             return;
         }
@@ -2619,6 +2659,73 @@ impl App {
                 self.lang_declined.push(name);
                 self.notice = Some(format!("installing {name} failed: {err}"));
             }
+        }
+        Ok(())
+    }
+
+    // --- pull-request fetches ---
+
+    /// Offer to fetch a pull request whose head commit isn't local —
+    /// without it nothing in it can be highlighted or block-scoped.
+    fn offer_fetch(&mut self, detail: &PrDetail) {
+        let number = detail.number;
+        let missing = !self.vcs.has_commit(&RevisionId(detail.head_sha.clone()));
+        let asked = self.fetch_declined.contains(&number) || self.fetch_running == Some(number);
+        self.fetch_offer = match (missing && !asked, self.forge()) {
+            (true, Ok(forge)) => Some(FetchOffer {
+                number,
+                head_ref: forge.head_ref(number),
+            }),
+            _ => None,
+        };
+    }
+
+    /// `y` on the fetch prompt: `git fetch` on a background thread —
+    /// reviewing continues meanwhile — the base commit too, when missing.
+    fn start_pr_fetch(&mut self, number: u64) {
+        let Some(offer) = self.fetch_offer.take() else {
+            return;
+        };
+        let base = self
+            .pr
+            .as_ref()
+            .map(|session| RevisionId(session.data.detail.base_sha.clone()))
+            .filter(|base| !self.vcs.has_commit(base))
+            .map(|base| base.0);
+        let root = self.vcs.root().to_path_buf();
+        self.fetch_running = Some(number);
+        self.notice = Some(format!("fetching #{number}…"));
+        let tx = self.events_tx.clone();
+        std::thread::spawn(move || {
+            let result = forge::fetch::fetch_pr(&root, &offer.head_ref, base.as_deref());
+            let _ = tx.send(AppEvent::PrFetched { number, result });
+        });
+    }
+
+    /// The fetch finished: with the sources local now, recompute the
+    /// views of the pull request still open — no forge round trip, and
+    /// the reviewer's place kept.
+    fn on_pr_fetched(&mut self, number: u64, result: Result<(), String>) -> Result<()> {
+        self.fetch_running = None;
+        if let Err(err) = result {
+            // Never re-offered: a failing fetch would loop the prompt.
+            self.fetch_declined.push(number);
+            self.notice = Some(format!("fetching #{number} failed: {err}"));
+            return Ok(());
+        }
+        self.notice = Some(format!("fetched #{number}"));
+        if self
+            .pr
+            .as_ref()
+            .is_some_and(|s| s.data.detail.number == number)
+        {
+            let (_, anchor) = self.current_anchor();
+            self.cache.reset();
+            if let Some(index) = self.current {
+                self.ensure_view(index)?;
+                self.reanchor_cursor(anchor);
+            }
+            self.start_prefetch();
         }
         Ok(())
     }

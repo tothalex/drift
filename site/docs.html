@@ -491,8 +491,9 @@
       in place when it's ready; <kbd>n</kbd> declines for the session.
       Files without an installed language review as plain hunks.</p>
       <p>The same works from the command line. Installing needs
-      <code>git</code> and a C compiler — the only place drift uses
-      either.</p>
+      <code>git</code> and a C compiler — the only place drift uses a
+      compiler (and, besides the pull-request fetch prompt,
+      <code>git</code>).</p>
       <pre><span class="p">$</span> drift lang install rust    <span class="c"># curated: bash, c, cpp, csharp, css, dockerfile,</span>
 <span class="c">                             #   go, html, java, javascript, json, lua, markdown,</span>
 <span class="c">                             #   php, python, ruby, rust, toml, tsx, typescript,</span>
@@ -569,10 +570,15 @@
       (<code>gh auth login --hostname git.corp.example</code>) and drift
       picks the forge from the repo's <code>origin</code> remote — see
       <a href="#config-forge">[forge]</a> for hosts naming neither.</p>
-      <p class="dim">When the PR's commits exist locally (after any
-      <code>git fetch</code>), diffs get full syntax highlighting and
-      block scoping; otherwise drift falls back to plain hunks — no fetch
-      is ever run for you. Large pull requests open too: past GitHub's
+      <p class="dim">When the PR's commits exist locally, diffs get full
+      syntax highlighting and block scoping. When they don't, drift
+      offers to fetch them: <kbd>y</kbd> runs <code>git fetch origin
+      pull/&lt;n&gt;/head</code> (GitLab:
+      <code>merge-requests/&lt;n&gt;/head</code>) in the background —
+      objects only, no branch or worktree changes — and the views fill in
+      when it lands; <kbd>n</kbd> keeps plain hunks for that PR. Nothing
+      is fetched without asking, and the fetch never prompts for
+      credentials in drift's terminal. Large pull requests open too: past GitHub's
       size limit for a whole diff, drift loads it file by file, and a
       single file the forge leaves out as too large says so in place of
       its diff rather than passing for unchanged.</p>
@@ -632,7 +638,8 @@
       <code>git</code> binary is not required to review. Only
       <code>drift lang install</code>/<code>build</code> shell out to
       <code>git</code> and a C compiler, to fetch and compile grammar
-      plugins.</p>
+      plugins — and the pull-request view's fetch prompt, to
+      <code>git fetch</code> a PR's commits when you accept it.</p>
     </section>
   </main>
 </div>

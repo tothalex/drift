@@ -39,6 +39,8 @@ cargo fmt                   # required before committing
 - `src/vcs/` — git via gitoxide; never shells out to `git`.
 - `src/forge/` — PRs through the official `gh`/`glab` CLIs; drift never
   speaks HTTP itself. One submodule per forge behind the `Forge` trait.
+  `fetch.rs` is the one `git` call outside `drift lang`: the PR view's
+  fetch prompt runs `git fetch` for a PR's commits, only on `y`.
 - `src/connect/` — send-to-agent backends behind the `Bridge` trait;
   one submodule per multiplexer plus a `BACKENDS` registry table in
   `mod.rs`. Adding a backend touches only this directory: new file,

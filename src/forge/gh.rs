@@ -116,6 +116,10 @@ impl Forge for GhCli {
         "pull request"
     }
 
+    fn head_ref(&self, number: u64) -> String {
+        format!("pull/{number}/head")
+    }
+
     fn list_open(&self) -> Result<Vec<PullRequest>, ForgeError> {
         let json = self.run(&args(&[
             "pr",

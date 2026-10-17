@@ -508,6 +508,10 @@ impl Vcs for GixVcs {
         Some(String::from_utf8_lossy(&blob).into_owned())
     }
 
+    fn has_commit(&self, rev: &RevisionId) -> bool {
+        self.find_commit(rev).is_ok()
+    }
+
     fn file_at_revision(&self, rev: &RevisionId, path: &Path) -> Option<String> {
         let blob = self.blob_at(rev, path)?;
         Some(String::from_utf8_lossy(&blob).into_owned())

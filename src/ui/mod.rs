@@ -1,5 +1,6 @@
 mod compose;
 mod diff_view;
+mod fetch_prompt;
 mod file_list;
 mod help;
 mod icons;
@@ -106,6 +107,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         help::draw(frame, app);
     }
     lang_prompt::draw(frame, app);
+    fetch_prompt::draw(frame, app);
     picker::draw(frame, app);
     compose::draw(frame, app);
 }

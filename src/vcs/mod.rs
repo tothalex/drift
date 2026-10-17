@@ -77,6 +77,12 @@ pub trait Vcs {
     /// be read — callers degrade gracefully.
     fn file_at_ancestor(&self, cmp: &Comparison, file: &ChangedFile) -> Option<String>;
 
+    /// Whether the commit is in the local object store. Providers that
+    /// can't tell answer yes, so nothing is offered to fetch it.
+    fn has_commit(&self, _rev: &RevisionId) -> bool {
+        true
+    }
+
     /// The file's content at an arbitrary revision, if the object exists
     /// locally. Best-effort — the pull-request view uses it to recover
     /// full sources for commits the repo happens to have fetched, and

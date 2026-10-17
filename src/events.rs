@@ -95,6 +95,11 @@ pub enum AppEvent {
         name: &'static str,
         result: Result<(), String>,
     },
+    /// A pull request's commits finished fetching (the fetch prompt).
+    PrFetched {
+        number: u64,
+        result: Result<(), String>,
+    },
     /// The launch check found a newer release; shown as a status-bar
     /// notice unless something more urgent is already there.
     UpdateAvailable {

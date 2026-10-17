@@ -44,6 +44,10 @@ impl Forge for GlabCli {
         "merge request"
     }
 
+    fn head_ref(&self, number: u64) -> String {
+        format!("merge-requests/{number}/head")
+    }
+
     fn list_open(&self) -> Result<Vec<PullRequest>, ForgeError> {
         let json = self.run(&args(&[
             "api",

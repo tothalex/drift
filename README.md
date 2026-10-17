@@ -203,7 +203,8 @@ drift lang remove rust
 ```
 
 Installing needs `git` and a C compiler — the only place drift uses
-either. A plugin lives in `~/.config/drift/languages/<name>/`:
+a compiler (and, besides the pull-request fetch prompt, `git`). A
+plugin lives in `~/.config/drift/languages/<name>/`:
 
 - `language.toml` — the manifest: language name, file extensions, the
   grammar repo pinned to a commit, and `block_kinds`, the grammar's
@@ -321,9 +322,14 @@ conversation in place:
   unchecked for a second look. Turn it off with `--no-viewed-sync` or
   `viewed_sync = false`. GitLab has no such API, so there the checks
   stay local to your session.
-- When the PR's commits exist locally (after any `git fetch`), diffs get
-  full syntax highlighting and block scoping; otherwise drift falls back
-  to the plain hunk view — no fetch is ever run for you.
+- When the PR's commits exist locally, diffs get full syntax
+  highlighting and block scoping. When they don't, drift offers to fetch
+  them: `y` runs `git fetch origin pull/<n>/head` (GitLab:
+  `merge-requests/<n>/head`) in the background — objects only, no branch
+  or worktree changes — and the views fill in when it lands; `n` keeps
+  the plain hunk view for that PR. Nothing is fetched without asking,
+  and the fetch never prompts for credentials in drift's terminal (ssh
+  runs in batch mode unless you configured your own ssh command).
 - Large pull requests open too: past GitHub's size limit for a whole
   diff, drift loads it file by file. A single file the forge leaves out
   as too large (GitHub and GitLab both do, for big lockfiles and
@@ -494,4 +500,6 @@ cargo test
 
 Git repositories are read natively (via gitoxide) — the `git` binary is
 not required to review. Only `drift lang install`/`build` shell out to
-`git` and a C compiler, to fetch and compile grammar plugins.
+`git` and a C compiler, to fetch and compile grammar plugins — and the
+pull-request view's fetch prompt, to `git fetch` a PR's commits when you
+accept it.
