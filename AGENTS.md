@@ -100,8 +100,13 @@ config may start a multiplexer of its own and swallow the tape's keys.
 The website (`site/`, deployed by `pages.yml` to GitHub Pages) is plain
 HTML/CSS/JS with no dependencies. Every color on it must be a value
 drift itself renders: the `theme.rs` palette, drift's ANSI-256 UI grays
-(235/236/238 → #262626/#303030/#444444), or the One Dark mono ramp
-(#dcdfe4 / #abb2bf / #828997 / #5c6370). The demos' token colors were
+(235/236/238 → #262626/#303030/#444444), the One Dark mono ramp
+(#dcdfe4 / #abb2bf / #828997 / #5c6370), or an `icons.rs` file-icon
+color. The demo trees' icons come from `site/icons.woff2`, a subset of
+Symbols Nerd Font Mono: every group and pinned-entry icon, both folders,
+and the file icons the demos show — any other icon means re-subsetting
+it (`pyftsubset` from fonttools; glyph sources in
+`site/icons-LICENSE.txt`). The demos' token colors were
 verified against real drift ANSI output — when highlighting rules
 change, re-verify (`herdr pane read <pane> --format ansi` against a
 fixture repo works well).

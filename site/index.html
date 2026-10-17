@@ -35,6 +35,8 @@
     --dir: #87afd7;           /* 110 — tree directory names */
     --group: #d787d7;         /* 176 — review-group headers */
     --tag: #d7af5f;           /* 179 — ↻ changed since checked */
+    --ic-ts: #519aba;         /* icons.rs — TypeScript, Markdown */
+    --ic-json: #cbcb41;       /* icons.rs — JSON */
     --emph-added-bg: #005f00;   /* 22 */
     --emph-removed-bg: #5f0000; /* 52 */
     --cursor-bg: #303030;     /* 236 */
@@ -210,6 +212,19 @@
   .tree .grp { color: var(--group); font-weight: 600; }
   .tree .rule, .tree .gen { color: var(--muted); }
   .tree .changed { color: var(--tag); }
+  /* drift's tree icons as `icons = true` draws them: a 13-glyph subset
+     of Symbols Nerd Font Mono (icons-LICENSE.txt). The box is measured
+     in the text font — two cells, icon and space, as in a terminal —
+     the glyph inside in the icon font. */
+  @font-face { font-family: "drift-icons"; src: url("icons.woff2") format("woff2"); font-display: block; }
+  .tree .ic { display: inline-block; width: 2ch; }
+  /* The glyphs are a full em wide; a terminal squeezes them into one
+     cell, so they are drawn smaller here to leave the space cell clear. */
+  .tree .ic i { font: normal 0.9em/1 "drift-icons"; }
+  .tree .ic.fold { color: var(--dir); }
+  .tree .ic.ts { color: var(--ic-ts); }
+  .tree .ic.json { color: var(--ic-json); }
+  .tree .ic.dim { color: var(--muted); }
   /* A tree that is the whole demo: full width, never hidden. */
   .tree.solo { width: auto; flex: 1; border-right: 0; }
   /* Reviewed files recede entirely behind a muted checkmark. */
@@ -438,14 +453,14 @@
         <div class="hdr">src/cart.ts  <span class="plus">+1</span> <span class="minus">−1</span></div>
         <div class="cols">
           <div class="tree">
-            <div class="trow"><span class="grp">▾ code</span> <span class="rule">──────── 1/4</span></div>
-            <div class="trow">  <span class="arrow">▾</span> <span class="dir">src</span><span class="arrow">/</span></div>
-            <div class="trow on">    <span class="m">M</span> cart.ts</div>
-            <div class="trow">    <span class="m">M</span> checkout.ts</div>
-            <div class="trow">    <span class="a">?</span> receipt.ts</div>
-            <div class="trow">    <span class="badge">✓</span> <span style="color:var(--muted)">api.ts</span></div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEAC4;</i></span>code</span> <span class="rule">────── 1/4</span></div>
+            <div class="trow">  <span class="arrow">▾</span> <span class="ic fold"><i>&#xE5FE;</i></span><span class="dir">src</span><span class="arrow">/</span></div>
+            <div class="trow on">    <span class="m">M</span> <span class="ic ts"><i>&#xE628;</i></span>cart.ts</div>
+            <div class="trow">    <span class="m">M</span> <span class="ic ts"><i>&#xE628;</i></span>checkout.ts</div>
+            <div class="trow">    <span class="a">?</span> <span class="ic ts"><i>&#xE628;</i></span>receipt.ts</div>
+            <div class="trow">    <span class="badge">✓</span> <span class="ic dim"><i>&#xE628;</i></span><span style="color:var(--muted)">api.ts</span></div>
             <div class="trow"> </div>
-            <div class="trow"><span class="grp">▸ tests</span> <span class="rule">──────────── 2</span></div>
+            <div class="trow"><span class="grp">▸ <span class="ic"><i>&#xEA79;</i></span>tests</span> <span class="rule">────────── 2</span></div>
           </div>
           <div class="code">
             <div class="row"><span class="g">8</span><span>  <span class="fn">total</span><span class="br">()</span><span class="pu">:</span> <span class="ty">number</span> <span class="br">{</span></span></div>
@@ -543,21 +558,21 @@
         <div class="hdr">files (2/5 reviewed)</div>
         <div class="cols">
           <div class="tree solo">
-            <div class="trow"><span class="grp">▾ code</span> <span class="rule">───────────────── 0/3</span></div>
-            <div class="trow">  <span class="arrow">▾</span> <span class="dir">src</span><span class="arrow">/</span></div>
-            <div class="trow on">    <span class="changed">↻</span> cart.ts</div>
-            <div class="trow">    <span class="m">M</span> models.ts</div>
-            <div class="trow">    <span class="a">?</span> receipt.ts</div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEAC4;</i></span>code</span> <span class="rule">─────────────── 0/3</span></div>
+            <div class="trow">  <span class="arrow">▾</span> <span class="ic fold"><i>&#xE5FE;</i></span><span class="dir">src</span><span class="arrow">/</span></div>
+            <div class="trow on">    <span class="changed">↻</span> <span class="ic ts"><i>&#xE628;</i></span>cart.ts</div>
+            <div class="trow">    <span class="m">M</span> <span class="ic ts"><i>&#xE628;</i></span>models.ts</div>
+            <div class="trow">    <span class="a">?</span> <span class="ic ts"><i>&#xE628;</i></span>receipt.ts</div>
             <div class="trow"> </div>
-            <div class="trow"><span class="grp">▾ tests</span> <span class="rule">──────────────── 1/1</span></div>
-            <div class="trow">  <span class="arrow">▾</span> <span class="dir">src</span><span class="arrow">/</span></div>
-            <div class="trow">    <span class="badge">✓</span> <span style="color:var(--muted)">cart.test.ts</span></div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEA79;</i></span>tests</span> <span class="rule">────────────── 1/1</span></div>
+            <div class="trow">  <span class="arrow">▾</span> <span class="ic fold"><i>&#xE5FE;</i></span><span class="dir">src</span><span class="arrow">/</span></div>
+            <div class="trow">    <span class="badge">✓</span> <span class="ic dim"><i>&#xE628;</i></span><span style="color:var(--muted)">cart.test.ts</span></div>
             <div class="trow"> </div>
-            <div class="trow"><span class="grp">▾ docs</span> <span class="rule">───────────────── 1/1</span></div>
-            <div class="trow">  <span class="badge">✓</span> <span style="color:var(--muted)">README.md</span></div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEAA4;</i></span>docs</span> <span class="rule">─────────────── 1/1</span></div>
+            <div class="trow">  <span class="badge">✓</span> <span class="ic dim"><i>&#xF48A;</i></span><span style="color:var(--muted)">README.md</span></div>
             <div class="trow"> </div>
-            <div class="trow"><span class="grp">▾ generated</span> <span class="rule">──────────────── 1</span></div>
-            <div class="trow">  <span class="gen">M package-lock.json</span></div>
+            <div class="trow"><span class="grp">▾ <span class="ic"><i>&#xEBCF;</i></span>generated</span> <span class="rule">────────────── 1</span></div>
+            <div class="trow">  <span class="gen">M <span class="ic"><i>&#xE60B;</i></span>package-lock.json</span></div>
           </div>
         </div>
         <div class="sb"><span class="seg">origin/main ← main</span><span>src/cart.ts changed since you checked it</span></div>
